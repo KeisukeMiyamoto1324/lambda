@@ -101,12 +101,12 @@ def parse_args() -> argparse.Namespace:
     # model configuration, and Lightning checkpoints.
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-len", type=int, default=256)
-    parser.add_argument("--d-model", type=int, default=384)
-    parser.add_argument("--num-layers", type=int, default=24)
-    parser.add_argument("--num-heads", type=int, default=16)
-    parser.add_argument("--d-ff", type=int, default=768)
-    parser.add_argument("--learning-rate", type=float, default=2e-4)
+    parser.add_argument("--max-len", type=int, default=512)
+    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--num-layers", type=int, default=16)
+    parser.add_argument("--num-heads", type=int, default=8)
+    parser.add_argument("--d-ff", type=int, default=256)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--max-steps", type=int, default=64000)
     parser.add_argument("--num-workers", type=int, default=4)
