@@ -22,6 +22,8 @@ class FakeBatch(dict[str, torch.Tensor]):
 
 
 class FakeTokenizer:
+    bos_token = "|<bos>|"
+    bos_token_id = 1
     eos_token_id = 2
     pad_token_id = 0
 
@@ -32,14 +34,20 @@ class FakeTokenizer:
         # ---------------------------------------------------------
         self.decoded_ids: list[int] = []
 
-    def __call__(self, prompt: str, return_tensors: str) -> FakeBatch:
+    def __call__(
+        self,
+        prompt: str,
+        return_tensors: str,
+        add_special_tokens: bool,
+    ) -> FakeBatch:
         # ---------------------------------------------------------
         # Return a fixed prompt length so tests can verify only new
         # generated ids are decoded.
         # ---------------------------------------------------------
         self.prompt = prompt
         self.return_tensors = return_tensors
-        return FakeBatch({"input_ids": torch.tensor([[10, 11, 12]], dtype=torch.long)})
+        self.add_special_tokens = add_special_tokens
+        return FakeBatch({"input_ids": torch.tensor([[1, 10, 11, 12]], dtype=torch.long)})
 
     def decode(self, token_ids: torch.Tensor, skip_special_tokens: bool) -> str:
         # ---------------------------------------------------------
@@ -66,7 +74,9 @@ class FakeModel:
         # can be tested without loading a real model.
         # ---------------------------------------------------------
         self.generate_kwargs = kwargs
-        return torch.tensor([[10, 11, 12, 13, 14]], dtype=torch.long)
+        input_ids = kwargs["input_ids"]
+        generated_ids = torch.tensor([[13, 14]], dtype=torch.long)
+        return torch.cat([input_ids, generated_ids], dim=1)
 
 
 class InferenceItTest(unittest.TestCase):
@@ -91,8 +101,10 @@ class InferenceItTest(unittest.TestCase):
         )
 
         self.assertEqual(text, "continuation text")
-        self.assertEqual(tokenizer.prompt, "prompt")
+        self.assertEqual(tokenizer.prompt, "|<bos>|prompt")
+        self.assertEqual(tokenizer.add_special_tokens, False)
         self.assertEqual(tokenizer.decoded_ids, [13, 14])
+        self.assertEqual(model.generate_kwargs["input_ids"].tolist(), [[1, 10, 11, 12]])
         self.assertEqual(model.generate_kwargs["max_new_tokens"], 8)
         self.assertEqual(model.generate_kwargs["do_sample"], True)
         self.assertEqual(model.generate_kwargs["temperature"], 0.7)

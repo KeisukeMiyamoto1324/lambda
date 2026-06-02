@@ -30,10 +30,15 @@ def generate_continuation_text(
     no_repeat_ngram_size: int,
 ) -> str:
     # ---------------------------------------------------------
-    # Tokenize the raw prompt and move tensors onto the model device
-    # selected by Transformers.
+    # Tokenize the prompt with BOS as part of the input so masks
+    # and token ids stay aligned through the tokenizer.
     # ---------------------------------------------------------
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    prompt_with_bos = f"{tokenizer.bos_token}{prompt}"
+    inputs = tokenizer(
+        prompt_with_bos,
+        return_tensors="pt",
+        add_special_tokens=False,
+    ).to(model.device)
     prompt_token_count = inputs["input_ids"].size(dim=1)
 
     # ---------------------------------------------------------
