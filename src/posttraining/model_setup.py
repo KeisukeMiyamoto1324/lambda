@@ -29,24 +29,6 @@ def build_tokenizer(base_model_dir: Path, output_path: Path) -> ByteLevelBPE:
     return tokenizer
 
 
-def freeze_except_latter_half(model: DecoderOnlyTransformer) -> tuple[int, int]:
-    # ---------------------------------------------------------
-    # Freeze the full model first, then train only the latter half
-    # of decoder blocks for partial fine tuning.
-    # ---------------------------------------------------------
-    trainable_layer_start = len(model.blocks) // 2
-    trainable_layer_end = len(model.blocks)
-
-    for parameter in model.parameters():
-        parameter.requires_grad = False
-
-    for block in model.blocks[trainable_layer_start:trainable_layer_end]:
-        for parameter in block.parameters():
-            parameter.requires_grad = True
-
-    return trainable_layer_start, trainable_layer_end
-
-
 def build_model_config(
     model: DecoderOnlyTransformer,
     learning_rate: float,
@@ -78,10 +60,10 @@ def load_base_model(
     learning_rate: float,
     max_len: int,
     accelerator: str,
-) -> tuple[DecoderOnlyTransformer, dict[str, int | float], int, int]:
+) -> tuple[DecoderOnlyTransformer, dict[str, int | float]]:
     # ---------------------------------------------------------
     # Load the Hugging Face model, copy its weights into the local
-    # Lightning model, and prepare it for partial fine tuning.
+    # Lightning model, and prepare every layer for fine tuning.
     # ---------------------------------------------------------
     hf_model = AutoModelForCausalLM.from_pretrained(
         base_model_dir,
@@ -100,7 +82,6 @@ def load_base_model(
     )
     model.load_state_dict(hf_model.transformer.state_dict())
     model = model.to(resolve_device())
-    trainable_layer_start, trainable_layer_end = freeze_except_latter_half(model=model)
     model.learning_rate = learning_rate
     model.use_fused_optimizer = accelerator == "cuda"
     model.train()
@@ -116,4 +97,4 @@ def load_base_model(
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),
         eos_token_id=tokenizer.token_to_id(tokenizer.eos_token),
     )
-    return model, model_config, trainable_layer_start, trainable_layer_end
+    return model, model_config

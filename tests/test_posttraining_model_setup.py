@@ -10,7 +10,6 @@ import torch
 from src.posttraining.artifacts import save_chat_model
 from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
 from src.posttraining.model_setup import download_base_model
-from src.posttraining.model_setup import freeze_except_latter_half
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.train import parse_args
 from src.pretraining.transformer import DecoderOnlyTransformer
@@ -83,10 +82,10 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(model_dir, Path("/tmp/model"))
         mocked_download.assert_called_once_with(repo_id="user/model", repo_type="model")
 
-    def test_freeze_except_latter_half_trains_only_latter_blocks(self) -> None:
+    def test_optimizer_uses_all_trainable_parameters(self) -> None:
         # ---------------------------------------------------------
-        # Freeze every parameter except the latter half of decoder
-        # blocks for partial fine tuning.
+        # Keep every parameter trainable so full-model fine tuning
+        # sends the whole model into the optimizer.
         # ---------------------------------------------------------
         model = DecoderOnlyTransformer(
             num_tokens=12,
@@ -97,36 +96,26 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             d_ff=16,
             pad_token_id=0,
         )
-        trainable_layer_start, trainable_layer_end = freeze_except_latter_half(model=model)
         optimizer = model.configure_optimizers()
 
-        trainable_parameter_ids = {
-            id(parameter)
-            for parameter in model.parameters()
-            if parameter.requires_grad
-        }
+        model_parameter_ids = {id(parameter) for parameter in model.parameters()}
         optimizer_parameter_ids = {
             id(parameter)
             for group in optimizer.param_groups
             for parameter in group["params"]
         }
 
-        self.assertEqual(trainable_layer_start, 2)
-        self.assertEqual(trainable_layer_end, 4)
-        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[0].parameters()))
-        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[1].parameters()))
-        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[2].parameters()))
-        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[3].parameters()))
-        self.assertEqual(optimizer_parameter_ids, trainable_parameter_ids)
+        self.assertTrue(all(parameter.requires_grad for parameter in model.parameters()))
+        self.assertEqual(optimizer_parameter_ids, model_parameter_ids)
 
-    def test_load_base_model_copies_hub_weights_and_freezes_layers(self) -> None:
+    def test_load_base_model_copies_hub_weights_and_trains_all_layers(self) -> None:
         # ---------------------------------------------------------
         # Load Hub weights into the local Lightning model and return
         # metadata for the downloaded architecture.
         # ---------------------------------------------------------
         with patch("src.posttraining.model_setup.AutoModelForCausalLM.from_pretrained", return_value=FakeHfModel()):
             with patch("src.posttraining.model_setup.resolve_device", return_value=torch.device("cpu")):
-                model, model_config, trainable_layer_start, trainable_layer_end = load_base_model(
+                model, model_config = load_base_model(
                     base_model_dir=Path("/tmp/model"),
                     tokenizer=FakeTokenizer(),
                     learning_rate=5e-5,
@@ -136,10 +125,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(model_config["max_len"], 16)
         self.assertEqual(model_config["num_layers"], 4)
-        self.assertEqual(trainable_layer_start, 2)
-        self.assertEqual(trainable_layer_end, 4)
-        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[0].parameters()))
-        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[3].parameters()))
+        self.assertTrue(all(parameter.requires_grad for parameter in model.parameters()))
 
     def test_save_chat_model_persists_hf_metadata(self) -> None:
         # ---------------------------------------------------------
@@ -187,16 +173,13 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                         bos_token_id=1,
                         eos_token_id=2,
                         end_of_turn_token_id=11,
-                        trainable_layer_start=2,
-                        trainable_layer_end=4,
                     )
 
             payload = json.loads((model_dir / "model_config.json").read_text())
 
         self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
         self.assertEqual(payload["training_max_len"], 8)
-        self.assertEqual(payload["trainable_layer_start"], 2)
-        self.assertEqual(payload["trainable_layer_end"], 4)
+        self.assertEqual(payload["trainable_layers"], "all")
         mocked_save.assert_called_once()
         mocked_copy.assert_called_once()
 

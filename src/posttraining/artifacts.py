@@ -23,8 +23,6 @@ def save_chat_model(
     bos_token_id: int,
     eos_token_id: int,
     end_of_turn_token_id: int,
-    trainable_layer_start: int,
-    trainable_layer_end: int,
 ) -> None:
     # ---------------------------------------------------------
     # Save the final chat-tuned weights and metadata needed by
@@ -45,8 +43,7 @@ def save_chat_model(
         "eos_token_id": eos_token_id,
         "end_of_turn_token_id": end_of_turn_token_id,
         "base_model_id": args.base_model_id,
-        "trainable_layer_start": trainable_layer_start,
-        "trainable_layer_end": trainable_layer_end,
+        "trainable_layers": "all",
         "chat_template_version": 1,
         "posttraining_datasets": [
             f"{MAGPIE_DATASET_PATH}:{MAGPIE_DATASET_SPLIT}",

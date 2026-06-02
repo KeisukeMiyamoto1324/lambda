@@ -64,7 +64,7 @@ def main() -> None:
     # ---------------------------------------------------------
     base_model_dir = download_base_model(base_model_id=args.base_model_id)
     tokenizer = build_tokenizer(base_model_dir=base_model_dir, output_path=model_dir)
-    model, model_config, trainable_layer_start, trainable_layer_end = load_base_model(
+    model, model_config = load_base_model(
         base_model_dir=base_model_dir,
         tokenizer=tokenizer,
         learning_rate=args.learning_rate,
@@ -118,8 +118,6 @@ def main() -> None:
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),
         eos_token_id=tokenizer.token_to_id(tokenizer.eos_token),
         end_of_turn_token_id=tokenizer.token_to_id(tokenizer.end_of_turn_token),
-        trainable_layer_start=trainable_layer_start,
-        trainable_layer_end=trainable_layer_end,
     )
 
 
