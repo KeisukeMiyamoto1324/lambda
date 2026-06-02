@@ -15,6 +15,8 @@ from src.posttraining.artifacts import save_chat_model
 from src.posttraining.cli import validate_step_budget
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.model_setup import build_tokenizer
+from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
+from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.trainer import train_stage
 from src.pretraining.device_utils import resolve_accelerator
@@ -28,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     # base model into a chat-oriented model artifact.
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model-dir", type=str, required=True)
+    parser.add_argument("--base-model-id", type=str, default=DEFAULT_BASE_MODEL_ID)
     parser.add_argument("--output-path", type=str, default="models/chat-model")
     parser.add_argument("--max-len", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
@@ -51,18 +53,18 @@ def main() -> None:
     # ---------------------------------------------------------
     args = parse_args()
     validate_step_budget(args=args)
-    base_model_dir = Path(args.base_model_dir)
     model_dir = Path(args.output_path)
     model_dir.mkdir(parents=True, exist_ok=True)
     accelerator = resolve_accelerator()
     precision = resolve_precision(accelerator=accelerator)
 
     # ---------------------------------------------------------
-    # Load the base tokenizer and model, then build all SFT
-    # dataloaders from the shared chat template.
+    # Download and load the base tokenizer and model, then build
+    # all SFT dataloaders from the shared chat template.
     # ---------------------------------------------------------
+    base_model_dir = download_base_model(base_model_id=args.base_model_id)
     tokenizer = build_tokenizer(base_model_dir=base_model_dir, output_path=model_dir)
-    model, model_config = load_base_model(
+    model, model_config, trainable_layer_start, trainable_layer_end = load_base_model(
         base_model_dir=base_model_dir,
         tokenizer=tokenizer,
         learning_rate=args.learning_rate,
@@ -116,6 +118,8 @@ def main() -> None:
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),
         eos_token_id=tokenizer.token_to_id(tokenizer.eos_token),
         end_of_turn_token_id=tokenizer.token_to_id(tokenizer.end_of_turn_token),
+        trainable_layer_start=trainable_layer_start,
+        trainable_layer_end=trainable_layer_end,
     )
 
 

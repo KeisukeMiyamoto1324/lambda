@@ -228,8 +228,9 @@ class DecoderOnlyTransformer(L.LightningModule):
         # Use AdamW for decoupled weight decay and enable the fused
         # CUDA implementation only when the training script requests it.
         # ---------------------------------------------------------
+        trainable_parameters = [parameter for parameter in self.parameters() if parameter.requires_grad]
         optimizer = AdamW(
-            self.parameters(),
+            trainable_parameters,
             lr=self.learning_rate,
             fused=self.use_fused_optimizer,
         )

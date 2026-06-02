@@ -1,0 +1,205 @@
+import argparse
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import torch
+
+from src.posttraining.artifacts import save_chat_model
+from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
+from src.posttraining.model_setup import download_base_model
+from src.posttraining.model_setup import freeze_except_latter_half
+from src.posttraining.model_setup import load_base_model
+from src.posttraining.train import parse_args
+from src.pretraining.transformer import DecoderOnlyTransformer
+
+
+class FakeTokenizer:
+    pad_token = "|<pad>|"
+    bos_token = "|<bos>|"
+    eos_token = "|<eos>|"
+
+    def token_to_id(self, token: str) -> int:
+        # ---------------------------------------------------------
+        # Return stable ids for the special tokens needed by model
+        # setup without loading a real tokenizer file.
+        # ---------------------------------------------------------
+        token_ids = {
+            self.pad_token: 0,
+            self.bos_token: 1,
+            self.eos_token: 2,
+        }
+        return token_ids[token]
+
+
+class FakeConfig:
+    vocab_size = 12
+    max_len = 16
+    d_model = 8
+    num_layers = 4
+    num_heads = 2
+    d_ff = 16
+
+
+class FakeHfModel:
+    def __init__(self) -> None:
+        # ---------------------------------------------------------
+        # Provide the same attributes used by load_base_model while
+        # keeping the test model small.
+        # ---------------------------------------------------------
+        self.config = FakeConfig()
+        self.transformer = DecoderOnlyTransformer(
+            num_tokens=self.config.vocab_size,
+            d_model=self.config.d_model,
+            max_len=self.config.max_len,
+            num_layers=self.config.num_layers,
+            num_heads=self.config.num_heads,
+            d_ff=self.config.d_ff,
+            pad_token_id=0,
+        )
+
+
+class PosttrainingModelSetupTest(unittest.TestCase):
+    def test_parse_args_uses_lambda_hub_model_default(self) -> None:
+        # ---------------------------------------------------------
+        # Keep posttraining pointed at the published lambda-160m Hub
+        # model unless the user overrides it.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["train.py"]):
+            args = parse_args()
+
+        self.assertEqual(args.base_model_id, DEFAULT_BASE_MODEL_ID)
+
+    def test_download_base_model_uses_hub_snapshot(self) -> None:
+        # ---------------------------------------------------------
+        # Resolve Hub model ids through snapshot_download so training
+        # always works from local artifacts after download.
+        # ---------------------------------------------------------
+        with patch("src.posttraining.model_setup.snapshot_download", return_value="/tmp/model") as mocked_download:
+            model_dir = download_base_model(base_model_id="user/model")
+
+        self.assertEqual(model_dir, Path("/tmp/model"))
+        mocked_download.assert_called_once_with(repo_id="user/model", repo_type="model")
+
+    def test_freeze_except_latter_half_trains_only_latter_blocks(self) -> None:
+        # ---------------------------------------------------------
+        # Freeze every parameter except the latter half of decoder
+        # blocks for partial fine tuning.
+        # ---------------------------------------------------------
+        model = DecoderOnlyTransformer(
+            num_tokens=12,
+            d_model=8,
+            max_len=16,
+            num_layers=4,
+            num_heads=2,
+            d_ff=16,
+            pad_token_id=0,
+        )
+        trainable_layer_start, trainable_layer_end = freeze_except_latter_half(model=model)
+        optimizer = model.configure_optimizers()
+
+        trainable_parameter_ids = {
+            id(parameter)
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        }
+        optimizer_parameter_ids = {
+            id(parameter)
+            for group in optimizer.param_groups
+            for parameter in group["params"]
+        }
+
+        self.assertEqual(trainable_layer_start, 2)
+        self.assertEqual(trainable_layer_end, 4)
+        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[0].parameters()))
+        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[1].parameters()))
+        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[2].parameters()))
+        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[3].parameters()))
+        self.assertEqual(optimizer_parameter_ids, trainable_parameter_ids)
+
+    def test_load_base_model_copies_hub_weights_and_freezes_layers(self) -> None:
+        # ---------------------------------------------------------
+        # Load Hub weights into the local Lightning model and return
+        # metadata for the downloaded architecture.
+        # ---------------------------------------------------------
+        with patch("src.posttraining.model_setup.AutoModelForCausalLM.from_pretrained", return_value=FakeHfModel()):
+            with patch("src.posttraining.model_setup.resolve_device", return_value=torch.device("cpu")):
+                model, model_config, trainable_layer_start, trainable_layer_end = load_base_model(
+                    base_model_dir=Path("/tmp/model"),
+                    tokenizer=FakeTokenizer(),
+                    learning_rate=5e-5,
+                    max_len=8,
+                    accelerator="cpu",
+                )
+
+        self.assertEqual(model_config["max_len"], 16)
+        self.assertEqual(model_config["num_layers"], 4)
+        self.assertEqual(trainable_layer_start, 2)
+        self.assertEqual(trainable_layer_end, 4)
+        self.assertFalse(any(parameter.requires_grad for parameter in model.blocks[0].parameters()))
+        self.assertTrue(all(parameter.requires_grad for parameter in model.blocks[3].parameters()))
+
+    def test_save_chat_model_persists_hf_metadata(self) -> None:
+        # ---------------------------------------------------------
+        # Save legacy metadata and call the HF artifact writer with
+        # trainable layer provenance included.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            model = DecoderOnlyTransformer(
+                num_tokens=12,
+                d_model=8,
+                max_len=16,
+                num_layers=4,
+                num_heads=2,
+                d_ff=16,
+                pad_token_id=0,
+            )
+            args = argparse.Namespace(
+                max_len=8,
+                learning_rate=5e-5,
+                base_model_id=DEFAULT_BASE_MODEL_ID,
+                magpie_steps=1,
+                everyday_steps=1,
+            )
+            model_config = {
+                "max_len": 16,
+                "d_model": 8,
+                "num_layers": 4,
+                "num_heads": 2,
+                "d_ff": 16,
+                "learning_rate": 5e-5,
+                "pad_token_id": 0,
+                "bos_token_id": 1,
+                "eos_token_id": 2,
+            }
+
+            with patch("src.posttraining.artifacts.save_hf_pretrained_artifacts") as mocked_save:
+                with patch("src.posttraining.artifacts.copy_inference_code") as mocked_copy:
+                    save_chat_model(
+                        model=model,
+                        model_dir=model_dir,
+                        model_config=model_config,
+                        args=args,
+                        pad_token_id=0,
+                        bos_token_id=1,
+                        eos_token_id=2,
+                        end_of_turn_token_id=11,
+                        trainable_layer_start=2,
+                        trainable_layer_end=4,
+                    )
+
+            payload = json.loads((model_dir / "model_config.json").read_text())
+
+        self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
+        self.assertEqual(payload["training_max_len"], 8)
+        self.assertEqual(payload["trainable_layer_start"], 2)
+        self.assertEqual(payload["trainable_layer_end"], 4)
+        mocked_save.assert_called_once()
+        mocked_copy.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

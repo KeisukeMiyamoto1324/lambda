@@ -9,6 +9,8 @@ from src.posttraining.dataset import EVERYDAY_TRAIN_SPLIT
 from src.posttraining.dataset import EVERYDAY_VALIDATION_SPLIT
 from src.posttraining.dataset import MAGPIE_DATASET_PATH
 from src.posttraining.dataset import MAGPIE_DATASET_SPLIT
+from src.pretraining.hf_artifacts import copy_inference_code
+from src.pretraining.hf_artifacts import save_hf_pretrained_artifacts
 from src.pretraining.transformer import DecoderOnlyTransformer
 
 
@@ -21,6 +23,8 @@ def save_chat_model(
     bos_token_id: int,
     eos_token_id: int,
     end_of_turn_token_id: int,
+    trainable_layer_start: int,
+    trainable_layer_end: int,
 ) -> None:
     # ---------------------------------------------------------
     # Save the final chat-tuned weights and metadata needed by
@@ -34,13 +38,15 @@ def save_chat_model(
     # ---------------------------------------------------------
     payload = {
         **model_config,
-        "max_len": args.max_len,
+        "training_max_len": args.max_len,
         "learning_rate": args.learning_rate,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
         "eos_token_id": eos_token_id,
         "end_of_turn_token_id": end_of_turn_token_id,
-        "base_model_dir": args.base_model_dir,
+        "base_model_id": args.base_model_id,
+        "trainable_layer_start": trainable_layer_start,
+        "trainable_layer_end": trainable_layer_end,
         "chat_template_version": 1,
         "posttraining_datasets": [
             f"{MAGPIE_DATASET_PATH}:{MAGPIE_DATASET_SPLIT}",
@@ -53,3 +59,15 @@ def save_chat_model(
 
     with open(model_dir / "model_config.json", "w") as f:
         json.dump(payload, f)
+
+    # ---------------------------------------------------------
+    # Save portable Hugging Face artifacts so the fine-tuned model
+    # can be loaded with AutoModelForCausalLM.
+    # ---------------------------------------------------------
+    save_hf_pretrained_artifacts(
+        model=model,
+        model_config=payload,
+        vocab_size=model.we.num_embeddings,
+        output_path=model_dir,
+    )
+    copy_inference_code(output_path=model_dir)
