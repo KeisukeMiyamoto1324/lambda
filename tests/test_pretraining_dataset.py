@@ -1,7 +1,9 @@
+from collections.abc import Callable
 from collections.abc import Iterator
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch.utils.data import IterableDataset
@@ -16,8 +18,8 @@ from src.pretraining.training_corpus_cases import PretrainingCorpusCase
 from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASES
 
 
-class FixedTokenDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
-    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+class FixedTokenDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]):
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         # ---------------------------------------------------------
         # Yield fixed examples so cache metadata can be tested
         # without opening remote datasets.
@@ -25,14 +27,16 @@ class FixedTokenDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
         for value in range(2):
             input_ids = torch.tensor([value, value + 1], dtype=torch.long)
             label_ids = torch.tensor([value + 1, 0], dtype=torch.long)
-            yield input_ids, label_ids
+            position_ids = torch.tensor([0, 1], dtype=torch.long)
+            segment_ids = torch.tensor([0, -1], dtype=torch.long)
+            yield input_ids, label_ids, position_ids, segment_ids
 
 
 class EmptyMixedPretrainingDataset(MixedPretrainingDataset):
     def _build_corpus_iterator(
         self,
         corpus_case: PretrainingCorpusCase,
-    ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         # ---------------------------------------------------------
         # Return an empty stream so tests can verify the mixer error
         # path without opening a remote Hugging Face dataset.
@@ -44,7 +48,7 @@ class NamedTokenMixedPretrainingDataset(MixedPretrainingDataset):
     def _build_corpus_iterator(
         self,
         corpus_case: PretrainingCorpusCase,
-    ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         # ---------------------------------------------------------
         # Yield a source-specific token so tests can verify finite
         # corpus exhaustion without opening remote datasets.
@@ -52,11 +56,47 @@ class NamedTokenMixedPretrainingDataset(MixedPretrainingDataset):
         token_id = 1 if corpus_case.name == "fineweb" else 2
         input_ids = torch.tensor([token_id, 0], dtype=torch.long)
         label_ids = torch.tensor([token_id, 0], dtype=torch.long)
+        position_ids = torch.tensor([0, 0], dtype=torch.long)
+        segment_ids = torch.tensor([0, -1], dtype=torch.long)
+        example = (input_ids, label_ids, position_ids, segment_ids)
 
         if corpus_case.name == "wiki":
-            return iter([(input_ids, label_ids)])
+            return iter([example])
 
-        return iter([(input_ids, label_ids) for _ in range(10)])
+        return iter([example for _ in range(10)])
+
+
+class FixedTokenizer:
+    def tokenize(self, sentence: str) -> list[int]:
+        # ---------------------------------------------------------
+        # Return integer tokens from whitespace-separated test text
+        # so packing behavior can be asserted directly.
+        # ---------------------------------------------------------
+        return [int(token) for token in sentence.split()]
+
+
+class FakeStreamingDataset:
+    def __init__(self, samples: list[dict[str, str]]) -> None:
+        # ---------------------------------------------------------
+        # Keep a small in-memory sample list with the filter method
+        # used by Hugging Face streaming datasets.
+        # ---------------------------------------------------------
+        self.samples = samples
+
+    def filter(self, predicate: Callable[[dict[str, str]], bool]) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Apply the dataset predicate eagerly so tests can exercise
+        # the same code path as the real streaming dataset.
+        # ---------------------------------------------------------
+        return FakeStreamingDataset(
+            samples=[sample for sample in self.samples if predicate(sample)]
+        )
+
+    def __iter__(self) -> Iterator[dict[str, str]]:
+        # ---------------------------------------------------------
+        # Yield samples one by one like a streaming dataset.
+        # ---------------------------------------------------------
+        return iter(self.samples)
 
 
 def build_case(
@@ -305,6 +345,61 @@ class PretrainingDatasetTest(unittest.TestCase):
         self.assertTrue(dataset._contains_allowed_url(sample={"url": "not-a-url"}))
         self.assertTrue(dataset._contains_allowed_url(sample={}))
 
+    def test_pretraining_corpus_packs_short_documents(self) -> None:
+        # ---------------------------------------------------------
+        # Pack adjacent short documents into one context window while
+        # resetting positions and segment ids at each document.
+        # ---------------------------------------------------------
+        corpus_case = build_case(name="custom", token_percentage=100.0)
+        dataset = PretrainingCorpusDataset(
+            corpus_case=corpus_case,
+            tokenizer=FixedTokenizer(),
+            max_len=6,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+        )
+        fake_dataset = FakeStreamingDataset(
+            samples=[
+                {"text": "10 11"},
+                {"text": "20"},
+                {"text": "30 31"},
+            ]
+        )
+
+        with patch("src.pretraining.dataset.load_dataset", return_value=fake_dataset):
+            input_ids, label_ids, position_ids, segment_ids = next(iter(dataset))
+
+        self.assertEqual(input_ids.tolist(), [1, 10, 11, 1, 20, 0])
+        self.assertEqual(label_ids.tolist(), [10, 11, 2, 20, 2, 0])
+        self.assertEqual(position_ids.tolist(), [0, 1, 2, 0, 1, 0])
+        self.assertEqual(segment_ids.tolist(), [0, 0, 0, 1, 1, -1])
+
+    def test_pretraining_corpus_splits_oversized_documents(self) -> None:
+        # ---------------------------------------------------------
+        # Split a single long document into max_len-sized segments
+        # so long samples are not dropped during packing.
+        # ---------------------------------------------------------
+        corpus_case = build_case(name="custom", token_percentage=100.0)
+        dataset = PretrainingCorpusDataset(
+            corpus_case=corpus_case,
+            tokenizer=FixedTokenizer(),
+            max_len=3,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+        )
+
+        segments = list(dataset._create_segments(text="10 11 12 13"))
+
+        self.assertEqual(
+            segments,
+            [
+                ([1, 10, 11], [10, 11, 12]),
+                ([12, 13], [13, 2]),
+            ],
+        )
+
     def test_mixed_dataset_reports_empty_filtered_corpus(self) -> None:
         # ---------------------------------------------------------
         # Convert a twice-empty corpus stream into a clear data split
@@ -342,6 +437,8 @@ class PretrainingDatasetTest(unittest.TestCase):
         self.assertEqual(payload["metadata"]["num_samples"], 2)
         self.assertEqual(payload["metadata"]["max_len"], 2)
         self.assertEqual(payload["metadata"]["corpus_signature"], "abc123")
+        self.assertTrue(torch.equal(payload["position_ids"][0], torch.tensor([0, 1])))
+        self.assertTrue(torch.equal(payload["segment_ids"][0], torch.tensor([0, -1])))
 
     def test_local_tokenized_dataset_rejects_metadata_mismatch(self) -> None:
         # ---------------------------------------------------------

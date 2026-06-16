@@ -14,7 +14,10 @@ from src.pretraining.training_corpus_cases import PretrainingCorpusCase
 from src.tokenizer.tokenizer import ByteLevelBPE
 
 
-class PretrainingCorpusDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
+PretrainingExample = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+
+
+class PretrainingCorpusDataset(IterableDataset[PretrainingExample]):
     def __init__(
         self,
         corpus_case: PretrainingCorpusCase,
@@ -41,7 +44,7 @@ class PretrainingCorpusDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]
         self.split_modulo = split_modulo
         self.split_indexes = split_indexes
 
-    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    def __iter__(self) -> Iterator[PretrainingExample]:
         # ---------------------------------------------------------
         # Open the configured corpus split as a streaming source so
         # samples are never materialized in local memory.
@@ -63,12 +66,60 @@ class PretrainingCorpusDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]
             )
         )
 
+        pending_input_ids: list[int] = []
+        pending_label_ids: list[int] = []
+        pending_position_ids: list[int] = []
+        pending_segment_ids: list[int] = []
+        next_segment_id = 0
+
         for sample in dataset:
             # ---------------------------------------------------------
-            # Tokenize each streamed document into fixed-length
-            # training sequence chunks and yield them immediately.
+            # Tokenize documents into independent segments, then pack
+            # adjacent segments until the context window is full.
             # ---------------------------------------------------------
-            yield from self._create_examples(text=sample[self.corpus_case.text_column])
+            for input_token_ids, label_token_ids in self._create_segments(
+                text=sample[self.corpus_case.text_column]
+            ):
+                if len(pending_input_ids) + len(input_token_ids) > self.max_len:
+                    yield self._build_example(
+                        input_token_ids=pending_input_ids,
+                        label_token_ids=pending_label_ids,
+                        position_ids=pending_position_ids,
+                        segment_ids=pending_segment_ids,
+                    )
+                    pending_input_ids = []
+                    pending_label_ids = []
+                    pending_position_ids = []
+                    pending_segment_ids = []
+                    next_segment_id = 0
+
+                segment_len = len(input_token_ids)
+                pending_input_ids.extend(input_token_ids)
+                pending_label_ids.extend(label_token_ids)
+                pending_position_ids.extend(range(segment_len))
+                pending_segment_ids.extend([next_segment_id for _ in range(segment_len)])
+                next_segment_id += 1
+
+                if len(pending_input_ids) == self.max_len:
+                    yield self._build_example(
+                        input_token_ids=pending_input_ids,
+                        label_token_ids=pending_label_ids,
+                        position_ids=pending_position_ids,
+                        segment_ids=pending_segment_ids,
+                    )
+                    pending_input_ids = []
+                    pending_label_ids = []
+                    pending_position_ids = []
+                    pending_segment_ids = []
+                    next_segment_id = 0
+
+        if len(pending_input_ids) > 0:
+            yield self._build_example(
+                input_token_ids=pending_input_ids,
+                label_token_ids=pending_label_ids,
+                position_ids=pending_position_ids,
+                segment_ids=pending_segment_ids,
+            )
 
     def _contains_sample(
         self,
@@ -125,7 +176,7 @@ class PretrainingCorpusDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]
         digest = blake2b(encoded_text, digest_size=8).digest()
         return int.from_bytes(digest, byteorder="big")
 
-    def _create_examples(self, text: str) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    def _create_segments(self, text: str) -> Iterator[tuple[list[int], list[int]]]:
         # ---------------------------------------------------------
         # Encode the document with BOS at the document start and
         # EOS at the true document end before chunking.
@@ -137,40 +188,43 @@ class PretrainingCorpusDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]
         ]
 
         # ---------------------------------------------------------
-        # Slice overlapping windows so the final token in each input
-        # still learns to predict the next document token.
+        # Slice long documents into independent packable segments
+        # without creating labels that cross document boundaries.
         # ---------------------------------------------------------
         chunk_starts = range(0, len(document_token_ids) - 1, self.max_len)
 
         # ---------------------------------------------------------
-        # Convert every chunk into one padded input-label pair and
-        # stream it out without buffering the full document.
+        # Return unpadded segments so the outer iterator can combine
+        # multiple short documents into one training example.
         # ---------------------------------------------------------
         for chunk_start in chunk_starts:
             window_token_ids = document_token_ids[chunk_start : chunk_start + self.max_len + 1]
-            yield self._build_example(
-                input_token_ids=window_token_ids[:-1],
-                label_token_ids=window_token_ids[1:],
-            )
+            yield window_token_ids[:-1], window_token_ids[1:]
 
     def _build_example(
         self,
         input_token_ids: list[int],
         label_token_ids: list[int],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        position_ids: list[int],
+        segment_ids: list[int],
+    ) -> PretrainingExample:
         # ---------------------------------------------------------
-        # Pad the input and label streams separately so every sample
-        # matches the configured sequence length.
+        # Pad all packed streams so every sample matches the fixed
+        # context length expected by the model and DataLoader.
         # ---------------------------------------------------------
         padding_size = self.max_len - len(input_token_ids)
         padded_input_ids = input_token_ids + [self.pad_token_id for _ in range(padding_size)]
         padded_label_ids = label_token_ids + [self.pad_token_id for _ in range(padding_size)]
+        padded_position_ids = position_ids + [0 for _ in range(padding_size)]
+        padded_segment_ids = segment_ids + [-1 for _ in range(padding_size)]
         inputs = torch.tensor(padded_input_ids, dtype=torch.long)
         labels = torch.tensor(padded_label_ids, dtype=torch.long)
-        return inputs, labels
+        positions = torch.tensor(padded_position_ids, dtype=torch.long)
+        segments = torch.tensor(padded_segment_ids, dtype=torch.long)
+        return inputs, labels, positions, segments
 
 
-class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
+class MixedPretrainingDataset(IterableDataset[PretrainingExample]):
     def __init__(
         self,
         corpus_cases: list[PretrainingCorpusCase],
@@ -219,7 +273,7 @@ class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]
         self.split_modulo = split_modulo
         self.split_indexes = split_indexes
 
-    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    def __iter__(self) -> Iterator[PretrainingExample]:
         # ---------------------------------------------------------
         # Build one independent stream per configured corpus so the
         # mixer can consume each source according to token targets.
@@ -272,14 +326,14 @@ class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]
                         exhausted_cases[corpus_index] = True
                         break
 
-                    input_ids, label_ids = example
+                    input_ids, label_ids, position_ids, segment_ids = example
                     seen_cases[corpus_index] = True
                     example_tokens = count_label_tokens(
                         label_ids=label_ids,
                         pad_token_id=self.pad_token_id,
                     )
                     consumed_tokens += example_tokens
-                    yield input_ids, label_ids
+                    yield input_ids, label_ids, position_ids, segment_ids
                     emitted_tokens += example_tokens
 
     def _resolve_worker_training_token_budget(self, worker_modulo: int) -> int:
@@ -322,9 +376,9 @@ class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]
 
     def _next_corpus_example(
         self,
-        corpus_iterators: list[Iterator[tuple[torch.Tensor, torch.Tensor]]],
+        corpus_iterators: list[Iterator[PretrainingExample]],
         corpus_index: int,
-    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+    ) -> PretrainingExample | None:
         # ---------------------------------------------------------
         # Read the next example and reopen repeatable streams at
         # cycle boundaries for long training runs.
@@ -356,7 +410,7 @@ class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]
     def _build_corpus_iterator(
         self,
         corpus_case: PretrainingCorpusCase,
-    ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[PretrainingExample]:
         # ---------------------------------------------------------
         # Open a fresh stream for one corpus with the same split and
         # tokenization settings used by the mixed training stream.
@@ -375,7 +429,7 @@ class MixedPretrainingDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]
         )
 
 
-class LocalTokenizedDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
+class LocalTokenizedDataset(Dataset[PretrainingExample]):
     def __init__(
         self,
         path: Path,
@@ -392,6 +446,8 @@ class LocalTokenizedDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         payload = torch.load(path, map_location="cpu")
         self.inputs = payload["inputs"]
         self.labels = payload["labels"]
+        self.position_ids = payload["position_ids"]
+        self.segment_ids = payload["segment_ids"]
         self.metadata = payload["metadata"]
 
         # ---------------------------------------------------------
@@ -418,16 +474,21 @@ class LocalTokenizedDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         # ---------------------------------------------------------
         return self.inputs.size(dim=0)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> PretrainingExample:
         # ---------------------------------------------------------
-        # Return one cached input-label pair without additional
+        # Return one cached packed example without additional
         # tokenization or network access.
         # ---------------------------------------------------------
-        return self.inputs[index], self.labels[index]
+        return (
+            self.inputs[index],
+            self.labels[index],
+            self.position_ids[index],
+            self.segment_ids[index],
+        )
 
 
 def build_tokenized_cache(
-    dataset: IterableDataset[tuple[torch.Tensor, torch.Tensor]],
+    dataset: IterableDataset[PretrainingExample],
     path: Path,
     num_samples: int,
     max_len: int,
@@ -440,6 +501,8 @@ def build_tokenized_cache(
     path.parent.mkdir(parents=True, exist_ok=True)
     inputs: list[torch.Tensor] = []
     labels: list[torch.Tensor] = []
+    position_ids: list[torch.Tensor] = []
+    segment_ids: list[torch.Tensor] = []
 
     # ---------------------------------------------------------
     # Consume exactly the configured validation budget and stop
@@ -447,9 +510,11 @@ def build_tokenized_cache(
     # ---------------------------------------------------------
     progress_bar = tqdm(total=num_samples, desc="Building validation cache", unit="sample")
 
-    for input_ids, label_ids in dataset:
+    for input_ids, label_ids, example_position_ids, example_segment_ids in dataset:
         inputs.append(input_ids)
         labels.append(label_ids)
+        position_ids.append(example_position_ids)
+        segment_ids.append(example_segment_ids)
         progress_bar.update(1)
 
         if len(inputs) == num_samples:
@@ -471,6 +536,8 @@ def build_tokenized_cache(
     payload = {
         "inputs": torch.stack(inputs),
         "labels": torch.stack(labels),
+        "position_ids": torch.stack(position_ids),
+        "segment_ids": torch.stack(segment_ids),
         "metadata": {
             "num_samples": num_samples,
             "max_len": max_len,

@@ -46,7 +46,11 @@ class DecoderBlock(nn.Module):
         self.norm_2 = nn.RMSNorm(normalized_shape=d_model)
         self.feed_forward = FeedForward(d_model=d_model, d_ff=d_ff)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Apply pre-norm self-attention so multiple decoder blocks can
         # be stacked without changing the external interface.
@@ -56,7 +60,8 @@ class DecoderBlock(nn.Module):
             attention_input,
             attention_input,
             attention_input,
-            is_causal=True,
+            is_causal=attention_mask is None,
+            attention_mask=attention_mask,
         )
         attention_residual = x + attention_output
 
@@ -157,20 +162,28 @@ class DecoderOnlyTransformer(L.LightningModule):
         # ---------------------------------------------------------
         self.loss = nn.CrossEntropyLoss(ignore_index=pad_token_id, reduction="sum")
 
-    def forward_hidden(self, token_ids: torch.Tensor) -> torch.Tensor:
+    def forward_hidden(
+        self,
+        token_ids: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Convert token ids into hidden states and apply positional
         # information before the decoder stack.
         # ---------------------------------------------------------
         word_embeddings = self.we(token_ids)
-        hidden_states = self.pe(word_embeddings)
+        hidden_states = self.pe(word_embeddings, position_ids=position_ids)
 
         # ---------------------------------------------------------
         # Reuse the same decoder block interface for every layer to
         # make the model depth configurable.
         # ---------------------------------------------------------
         for block in self.blocks:
-            hidden_states = block(hidden_states)
+            hidden_states = block(
+                hidden_states,
+                attention_mask=attention_mask,
+            )
 
         # ---------------------------------------------------------
         # Normalize the final hidden states and map them into token
@@ -262,12 +275,27 @@ class DecoderOnlyTransformer(L.LightningModule):
             },
         }
 
-    def compute_chunked_loss(self, input_tokens: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def compute_chunked_loss(
+        self,
+        input_tokens: torch.Tensor,
+        labels: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        segment_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Run the Transformer stack once, then split only the large
         # vocabulary projection and cross-entropy over token positions.
         # ---------------------------------------------------------
-        hidden_states = self.forward_hidden(input_tokens)
+        attention_mask = None
+
+        if segment_ids is not None:
+            attention_mask = build_packed_attention_mask(segment_ids=segment_ids)
+
+        hidden_states = self.forward_hidden(
+            token_ids=input_tokens,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+        )
         seq_len = hidden_states.size(dim=1)
         chunk_starts = range(0, seq_len, self.loss_chunk_size)
 
@@ -288,27 +316,76 @@ class DecoderOnlyTransformer(L.LightningModule):
         valid_token_count = labels.ne(self.pad_token_id).sum()
         return total_loss / valid_token_count
 
-    def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:
         # ---------------------------------------------------------
         # Run the forward pass and compute token-level cross-entropy
         # against the shifted labels.
         # ---------------------------------------------------------
         del batch_idx
-        input_tokens, labels = batch
-        loss = self.compute_chunked_loss(input_tokens=input_tokens, labels=labels)
+        input_tokens, labels, position_ids, segment_ids = normalize_training_batch(batch=batch)
+        loss = self.compute_chunked_loss(
+            input_tokens=input_tokens,
+            labels=labels,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+        )
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=False)
         return loss
 
-    def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:
         # ---------------------------------------------------------
         # Reuse the same autoregressive loss during validation so
         # checkpoints can monitor held-out next-token accuracy.
         # ---------------------------------------------------------
         del batch_idx
-        input_tokens, labels = batch
-        loss = self.compute_chunked_loss(input_tokens=input_tokens, labels=labels)
+        input_tokens, labels, position_ids, segment_ids = normalize_training_batch(batch=batch)
+        loss = self.compute_chunked_loss(
+            input_tokens=input_tokens,
+            labels=labels,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+        )
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
+
+
+def normalize_training_batch(
+    batch: tuple[torch.Tensor, ...],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    # ---------------------------------------------------------
+    # Support packed pretraining batches while keeping existing
+    # posttraining batches on the two-tensor path.
+    # ---------------------------------------------------------
+    if len(batch) == 2:
+        input_tokens, labels = batch
+        return input_tokens, labels, None, None
+
+    input_tokens, labels, position_ids, segment_ids = batch
+    return input_tokens, labels, position_ids, segment_ids
+
+
+def build_packed_attention_mask(segment_ids: torch.Tensor) -> torch.Tensor:
+    # ---------------------------------------------------------
+    # Allow each token to attend only to earlier tokens from the
+    # same packed segment. Padding query rows attend to valid keys.
+    # ---------------------------------------------------------
+    batch_size, seq_len = segment_ids.size()
+    causal_mask = torch.ones(
+        seq_len,
+        seq_len,
+        dtype=torch.bool,
+        device=segment_ids.device,
+    ).tril()
+    valid_tokens = segment_ids.ge(0)
+    same_segment_mask = segment_ids.unsqueeze(2).eq(segment_ids.unsqueeze(1))
+    packed_mask = same_segment_mask & causal_mask.unsqueeze(0) & valid_tokens.unsqueeze(1)
+    padding_query_mask = causal_mask.unsqueeze(0) & valid_tokens.unsqueeze(1)
+    attention_mask = torch.where(
+        valid_tokens.view(batch_size, seq_len, 1),
+        packed_mask,
+        padding_query_mask,
+    )
+    return attention_mask.unsqueeze(1)
 
 
 def resolve_warmup_cosine_learning_rate(

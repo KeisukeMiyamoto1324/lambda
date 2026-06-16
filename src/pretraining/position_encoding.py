@@ -20,11 +20,19 @@ class PositionEncoding(nn.Module):
 
         self.register_buffer("pe", pe)
 
-    def forward(self, word_embeddings: torch.Tensor, position_offset: int = 0) -> torch.Tensor:
+    def forward(
+        self,
+        word_embeddings: torch.Tensor,
+        position_offset: int = 0,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Add positions for the visible slice, starting at the cache
-        # length when incremental inference supplies an offset.
+        # Add explicit packed positions when supplied, otherwise use
+        # the normal contiguous position slice for inference.
         # ---------------------------------------------------------
+        if position_ids is not None:
+            return word_embeddings + self.pe[position_ids, :]
+
         seq_len = word_embeddings.size(1)
         position_end = position_offset + seq_len
         return word_embeddings + self.pe[position_offset:position_end, :].unsqueeze(0)

@@ -53,6 +53,7 @@ class Attention(nn.Module):
         encoding_for_k: torch.Tensor,
         encoding_for_v: torch.Tensor,
         is_causal: bool = False,
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Create the projected queries, keys, and values for each
@@ -70,6 +71,7 @@ class Attention(nn.Module):
             q,
             k,
             v,
+            attn_mask=attention_mask,
             is_causal=is_causal,
         )
 

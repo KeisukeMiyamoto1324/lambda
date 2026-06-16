@@ -30,6 +30,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+PACKING_VERSION = "sequence-packing-v1"
+
+
 def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
     # Define command line arguments used to configure the full
@@ -232,7 +235,7 @@ def main() -> None:
     )
     default_validation_cache_path = (
         model_dir
-        / f"validation-cache-{corpus_signature}-bos-eos-text-hash-len{args.max_len}-samples{validation_sample_count}"
+        / f"validation-cache-{corpus_signature}-{PACKING_VERSION}-len{args.max_len}-samples{validation_sample_count}"
         f"-split{args.val_split_modulo}-{args.val_split_index}.pt"
     )
     validation_cache_path = (
@@ -284,6 +287,7 @@ def main() -> None:
     # batches from local tensors during every validation pass.
     # ---------------------------------------------------------
     validation_cache_metadata = {
+        "packing_version": PACKING_VERSION,
         "corpus_signature": corpus_signature,
         "corpus_cases": serialize_pretraining_corpus_cases(PRETRAINING_CORPUS_CASES),
         "mix_cycle_tokens": args.mix_cycle_tokens,
@@ -448,6 +452,7 @@ def main() -> None:
         "val_split_index": args.val_split_index,
         "validation_cache_path": str(validation_cache_path),
         "validation_sample_count": validation_sample_count,
+        "packing_version": PACKING_VERSION,
         "trained_steps": trainer.global_step,
     }
 

@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import torch
+
 from src.pretraining.train import parse_args
+from src.pretraining.transformer import DecoderOnlyTransformer
+from src.pretraining.transformer import build_packed_attention_mask
 from src.pretraining.transformer import resolve_warmup_cosine_learning_rate
 
 
@@ -112,6 +116,52 @@ class PretrainingTrainTest(unittest.TestCase):
             ),
             min_learning_rate,
         )
+
+    def test_build_packed_attention_mask_blocks_other_segments(self) -> None:
+        # ---------------------------------------------------------
+        # Keep packed attention causal inside each segment and block
+        # tokens from other packed documents.
+        # ---------------------------------------------------------
+        segment_ids = torch.tensor([[0, 0, 1, -1]], dtype=torch.long)
+        attention_mask = build_packed_attention_mask(segment_ids=segment_ids)
+
+        self.assertEqual(attention_mask.shape, (1, 1, 4, 4))
+        self.assertEqual(
+            attention_mask[0, 0].tolist(),
+            [
+                [True, False, False, False],
+                [True, True, False, False],
+                [False, False, True, False],
+                [True, True, True, False],
+            ],
+        )
+
+    def test_transformer_computes_loss_for_packed_batch(self) -> None:
+        # ---------------------------------------------------------
+        # Run one packed batch through the model using explicit
+        # position ids and segment ids.
+        # ---------------------------------------------------------
+        model = DecoderOnlyTransformer(
+            num_tokens=16,
+            d_model=8,
+            max_len=4,
+            num_layers=1,
+            num_heads=2,
+            d_ff=16,
+            pad_token_id=0,
+        )
+        input_tokens = torch.tensor([[1, 3, 1, 4]], dtype=torch.long)
+        labels = torch.tensor([[3, 2, 4, 2]], dtype=torch.long)
+        position_ids = torch.tensor([[0, 1, 0, 1]], dtype=torch.long)
+        segment_ids = torch.tensor([[0, 0, 1, 1]], dtype=torch.long)
+        loss = model.compute_chunked_loss(
+            input_tokens=input_tokens,
+            labels=labels,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+        )
+
+        self.assertTrue(torch.isfinite(loss))
 
     def test_parse_args_accepts_resume_checkpoint_path(self) -> None:
         # ---------------------------------------------------------
