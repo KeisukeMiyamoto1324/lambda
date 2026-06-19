@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--batch-size", type=int, default=96)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
     parser.add_argument("--max-steps", type=int, default=18000)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--val-split-modulo", type=int, default=100)
@@ -100,6 +101,9 @@ def parse_args() -> argparse.Namespace:
 
     if args.learning_rate <= 0.0:
         parser.error("--learning-rate must be greater than 0")
+
+    if args.gradient_accumulation_steps < 1:
+        parser.error("--gradient-accumulation-steps must be greater than or equal to 1")
 
     if args.max_steps <= 0:
         parser.error("--max-steps must be greater than 0")
@@ -283,6 +287,7 @@ def main() -> None:
         precision=precision,
         callbacks=callbacks,
         logger=metrics_logger,
+        accumulate_grad_batches=args.gradient_accumulation_steps,
         log_every_n_steps=args.metric_log_every_n_steps,
         val_check_interval=args.val_check_interval,
         limit_val_batches=args.val_batches,
@@ -305,6 +310,9 @@ def main() -> None:
         **source_model_config,
         "max_len": max_len,
         "learning_rate": args.learning_rate,
+        "batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "lr_schedule": "fixed",
         "loss_chunk_size": args.loss_chunk_size,
         "pad_token_id": pad_token_id,
