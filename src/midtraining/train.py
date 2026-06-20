@@ -27,6 +27,7 @@ from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.tokenizer import ByteLevelBPE
 from src.shared.training_progress import FullTrainingProgressBar
+from src.shared.validation_generation import ValidationGenerationCallback
 
 from dotenv import load_dotenv
 
@@ -258,6 +259,11 @@ def main() -> None:
     # ---------------------------------------------------------
     callbacks = [
         FullTrainingProgressBar(),
+        ValidationGenerationCallback(
+            dataset=val_dataset,
+            tokenizer=tokenizer,
+            output_dir=model_dir / "validation-generations",
+        ),
         DatasetEpochCallback(dataset=train_dataset),
         ModelCheckpoint(
             dirpath=checkpoint_dir,

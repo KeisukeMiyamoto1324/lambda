@@ -20,6 +20,7 @@ from src.shared.packed_dataset import PackedCorpusDataset
 from src.shared.device_utils import resolve_accelerator, resolve_precision
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_progress import FullTrainingProgressBar
+from src.shared.validation_generation import ValidationGenerationCallback
 from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASE
 from src.pretraining.training_corpus_cases import PretrainingCorpusCase
 from src.pretraining.training_corpus_cases import serialize_pretraining_corpus_case
@@ -349,6 +350,11 @@ def main() -> None:
     # ---------------------------------------------------------
     callbacks = [
         FullTrainingProgressBar(),
+        ValidationGenerationCallback(
+            dataset=val_dataset,
+            tokenizer=tokenizer,
+            output_dir=model_dir / "validation-generations",
+        ),
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="step-{step}",
