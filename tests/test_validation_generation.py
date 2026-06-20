@@ -49,22 +49,23 @@ class ValidationTokenizer:
 
 
 class ValidationGenerationCallbackTest(unittest.TestCase):
-    def test_validation_generation_saves_every_sample(self) -> None:
+    def test_validation_generation_saves_only_preview_samples(self) -> None:
         # ---------------------------------------------------------
-        # Save every generated continuation while using only the
-        # first half of each first packed segment as its prompt.
+        # Generate only the preview budget and save each generated
+        # continuation with its prompt in the step JSONL file.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
             callback = ValidationGenerationCallback(
                 dataset=ValidationDataset(),
                 tokenizer=ValidationTokenizer(),
                 output_dir=Path(temp_dir),
+                preview_count=1,
             )
             trainer = MagicMock()
             trainer.global_step = 1000
             trainer.is_global_zero = True
 
-            with patch.object(callback, "_generate_ids", return_value=[40, 41]):
+            with patch.object(callback, "_generate_ids", return_value=[40, 41]) as generate_ids:
                 callback.on_validation_epoch_end(
                     trainer=trainer,
                     pl_module=MagicMock(),
@@ -76,11 +77,11 @@ class ValidationGenerationCallbackTest(unittest.TestCase):
                 for line in output_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(generate_ids.call_count, 1)
         self.assertEqual(results[0]["prompt"], "1 10 11")
         self.assertEqual(results[0]["generated_text"], "40 41")
-        self.assertEqual(results[1]["sample_index"], 1)
-        self.assertEqual(results[1]["global_step"], 1000)
+        self.assertEqual(results[0]["global_step"], 1000)
 
 
 if __name__ == "__main__":

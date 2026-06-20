@@ -41,8 +41,8 @@ class ValidationGenerationCallback(Callback):
         pl_module: L.LightningModule,
     ) -> None:
         # ---------------------------------------------------------
-        # Generate deterministic continuations for every validation
-        # sample and store one complete JSONL file per global step.
+        # Generate deterministic continuations for the small preview
+        # set and store those results in one JSONL file per step.
         # ---------------------------------------------------------
         if not trainer.is_global_zero:
             return
@@ -51,14 +51,15 @@ class ValidationGenerationCallback(Callback):
         output_path = self.output_dir / f"step-{trainer.global_step}.jsonl"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         preview_texts: list[str] = []
+        generation_count = min(self.preview_count, len(self.dataset))
         task_id = progress_manager.add_task(
             description="Validation generation",
-            total=len(self.dataset),
+            total=generation_count,
         )
 
         try:
             with output_path.open("w", encoding="utf-8") as output_file:
-                for sample_index in range(len(self.dataset)):
+                for sample_index in range(generation_count):
                     input_ids, _, _, segment_ids = self.dataset[sample_index]
                     prompt_ids = self._build_prompt_ids(
                         input_ids=input_ids,
@@ -80,8 +81,7 @@ class ValidationGenerationCallback(Callback):
                     }
                     output_file.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    if sample_index < self.preview_count:
-                        preview_texts.append(generated_text[: self.preview_characters])
+                    preview_texts.append(generated_text[: self.preview_characters])
 
                     progress_manager.update(task_id=task_id, advance=1)
         finally:
