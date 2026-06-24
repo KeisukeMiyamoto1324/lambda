@@ -12,12 +12,15 @@ from src.inference_base.cli import parse_args
 from src.inference_base.runtime import run_inference
 
 
+DEFAULT_MODEL_ID = "MK0727/lambda-1-160m-base"
+
+
 def main() -> None:
     # ---------------------------------------------------------
     # Parse runtime settings and load PyTorch artifacts from a
     # local directory or Hub repository id.
     # ---------------------------------------------------------
-    args = parse_args(default_model_dir=PROJECT_ROOT / "models" / "lambda-160m-midtrained")
+    args = parse_args(default_model_dir=Path(DEFAULT_MODEL_ID))
     run_inference(args=args)
 
 

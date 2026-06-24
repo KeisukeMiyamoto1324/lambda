@@ -1,8 +1,5 @@
-import os
 import sys
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 # ---------------------------------------------------------
 # Add the project root to the import path so direct script
@@ -15,14 +12,15 @@ from src.inference_base.cli import parse_args
 from src.inference_base.runtime import run_inference
 
 
+DEFAULT_MODEL_ID = "MK0727/lambda-1-160m-base"
+
+
 def main() -> None:
     # ---------------------------------------------------------
-    # Load the Hub repository id from .env and use it as the
-    # default PyTorch model source for inference.
+    # Use the published Hub repository id as the default PyTorch
+    # model source for inference.
     # ---------------------------------------------------------
-    load_dotenv()
-
-    args = parse_args(default_model_dir=Path(os.environ["HF_REPO"]))
+    args = parse_args(default_model_dir=Path(DEFAULT_MODEL_ID))
     run_inference(args=args)
 
 
