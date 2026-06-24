@@ -1,4 +1,4 @@
-# MyLLM
+# lambda
 
 A minimal decoder-only Transformer project built with PyTorch and Lightning.
 
