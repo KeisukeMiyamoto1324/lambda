@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-model-id", type=str, default=DEFAULT_BASE_MODEL_ID)
-    parser.add_argument("--output-path", type=str, default="models/chat-model")
-    parser.add_argument("--max-len", type=int, default=512)
+    parser.add_argument("--output-path", type=str, default="models/lambda-1-160m-it")
+    parser.add_argument("--max-len", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--repeat-epochs", type=int, default=3)
