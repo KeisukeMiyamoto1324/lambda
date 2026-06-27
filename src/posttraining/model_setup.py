@@ -8,7 +8,7 @@ from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.tokenizer import ByteLevelBPE
 
 
-DEFAULT_BASE_MODEL_ID = "MK0727/lambda-160m"
+DEFAULT_BASE_MODEL_ID = "MK0727/lambda-1-160m-base"
 
 
 def download_base_model(base_model_id: str) -> Path:

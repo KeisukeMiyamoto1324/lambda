@@ -70,7 +70,7 @@ class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 class PosttrainingModelSetupTest(unittest.TestCase):
     def test_parse_args_uses_lambda_hub_model_default(self) -> None:
         # ---------------------------------------------------------
-        # Keep posttraining pointed at the published lambda-160m Hub
+        # Keep posttraining pointed at the published lambda base Hub
         # model unless the user overrides it.
         # ---------------------------------------------------------
         with patch("sys.argv", ["train.py"]):
