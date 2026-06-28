@@ -29,6 +29,7 @@ from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
+from src.shared.training_plan import show_training_token_plan
 from src.shared.training_progress import FullTrainingProgressBar
 from src.shared.validation_generation import ValidationGenerationCallback
 from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASE
@@ -164,6 +165,18 @@ def main() -> None:
         pin_memory=accelerator == "cuda",
         persistent_workers=args.num_workers > 0,
     )
+
+    if is_global_zero_process():
+        estimated_train_tokens = show_training_token_plan(
+            stage_name="pretraining",
+            max_steps=args.max_steps,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            batch_size=args.batch_size,
+            device_count=device_count,
+            max_len=args.max_len,
+        )
+    else:
+        estimated_train_tokens = 0
 
     # ---------------------------------------------------------
     # Build the Transformer with the tokenizer vocabulary size
@@ -315,6 +328,7 @@ def main() -> None:
         "packing_version": PACKING_VERSION,
         "shuffle_buffer_size": SHUFFLE_BUFFER_SIZE,
         "shuffle_seed": SHUFFLE_SEED,
+        "estimated_train_tokens": estimated_train_tokens,
         "trained_steps": trainer.global_step,
     }
 

@@ -34,6 +34,7 @@ from src.shared.pytorch_artifacts import load_model_config
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.tokenizer import ByteLevelBPE
+from src.shared.training_plan import show_training_token_plan
 from src.shared.training_progress import FullTrainingProgressBar
 from src.shared.validation_generation import ValidationGenerationCallback
 
@@ -160,6 +161,18 @@ def main() -> None:
         persistent_workers=args.num_workers > 0,
     )
 
+    if is_global_zero_process():
+        estimated_train_tokens = show_training_token_plan(
+            stage_name="midtraining",
+            max_steps=args.max_steps,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            batch_size=args.batch_size,
+            device_count=device_count,
+            max_len=max_len,
+        )
+    else:
+        estimated_train_tokens = 0
+
     # ---------------------------------------------------------
     # Rebuild the pretrained architecture with optional context
     # length override and a fixed mid-training learning rate.
@@ -267,6 +280,7 @@ def main() -> None:
         "packing_version": PACKING_VERSION,
         "shuffle_buffer_size": SHUFFLE_BUFFER_SIZE,
         "shuffle_seed": SHUFFLE_SEED,
+        "midtraining_estimated_train_tokens": estimated_train_tokens,
         "trained_steps": trainer.global_step,
     }
 
