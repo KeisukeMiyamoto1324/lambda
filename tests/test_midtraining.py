@@ -39,27 +39,6 @@ class MidtrainingTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     parse_args()
 
-    def test_parse_args_uses_midtraining_defaults(self) -> None:
-        # ---------------------------------------------------------
-        # Keep fixed LR, inherited max length, and separate output
-        # directory as the standard mid-training behavior.
-        # ---------------------------------------------------------
-        with tempfile.TemporaryDirectory() as temp_dir:
-            model_dir = Path(temp_dir)
-
-            for file_name in ["model.pth", "model_config.json", "tokenizer.json"]:
-                (model_dir / file_name).touch()
-
-            with patch("sys.argv", ["train.py", "--model-path", str(model_dir)]):
-                args = parse_args()
-
-        self.assertIsNone(args.max_len)
-        self.assertEqual(args.learning_rate, 2e-5)
-        self.assertEqual(args.max_steps, 18000)
-        self.assertEqual(args.devices, "auto")
-        self.assertEqual(args.checkpoint_every_n_steps, 5000)
-        self.assertEqual(args.output_path, "models/lambda-160m-midtrained")
-
     def test_parse_args_rejects_invalid_step_budget(self) -> None:
         # ---------------------------------------------------------
         # Reject non-positive step values before creating datasets

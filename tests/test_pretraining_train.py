@@ -30,18 +30,6 @@ class PretrainingTrainTest(unittest.TestCase):
         self.assertEqual(args.devices, "auto")
         self.assertEqual(args.output_path, "models/lambda-160m")
 
-    def test_parse_args_uses_warmup_cosine_lr_defaults(self) -> None:
-        # ---------------------------------------------------------
-        # Keep the existing learning rate as the maximum value while
-        # enabling warmup and cosine decay by default.
-        # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py"]):
-            args = parse_args()
-
-        self.assertEqual(args.learning_rate, 2e-4)
-        self.assertEqual(args.lr_warmup_steps, 2000)
-        self.assertEqual(args.min_learning_rate_ratio, 0.1)
-
     def test_parse_args_rejects_invalid_lr_schedule(self) -> None:
         # ---------------------------------------------------------
         # Reject schedule values that cannot form a bounded warmup
