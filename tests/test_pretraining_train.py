@@ -152,6 +152,55 @@ class PretrainingTrainTest(unittest.TestCase):
 
         self.assertTrue(torch.isfinite(loss))
 
+    def test_transformer_rejects_odd_rotary_head_dim(self) -> None:
+        # ---------------------------------------------------------
+        # Reject head dimensions that cannot be split into rotary
+        # even/odd pairs for query and key rotation.
+        # ---------------------------------------------------------
+        with self.assertRaises(ValueError):
+            DecoderOnlyTransformer(
+                num_tokens=16,
+                d_model=6,
+                max_len=4,
+                num_layers=1,
+                num_heads=2,
+                d_ff=16,
+                pad_token_id=0,
+            )
+
+    def test_forward_with_cache_matches_full_forward(self) -> None:
+        # ---------------------------------------------------------
+        # Verify one-token cached inference uses the same RoPE
+        # positions as the full causal forward pass.
+        # ---------------------------------------------------------
+        torch.manual_seed(7)
+        model = DecoderOnlyTransformer(
+            num_tokens=16,
+            d_model=8,
+            max_len=4,
+            num_layers=1,
+            num_heads=2,
+            d_ff=16,
+            pad_token_id=0,
+        )
+        model.eval()
+        token_ids = torch.tensor([[1, 3, 4, 2]], dtype=torch.long)
+
+        with torch.no_grad():
+            full_logits = model(token_ids)
+            past_key_values = None
+            cached_logits = []
+
+            for token_index in range(token_ids.size(dim=1)):
+                logits, past_key_values = model.forward_with_cache(
+                    token_ids=token_ids[:, token_index : token_index + 1],
+                    past_key_values=past_key_values,
+                )
+                cached_logits.append(logits)
+
+        stacked_cached_logits = torch.cat(cached_logits, dim=1)
+        torch.testing.assert_close(stacked_cached_logits, full_logits, atol=1e-5, rtol=1e-5)
+
     def test_parse_args_accepts_resume_checkpoint_path(self) -> None:
         # ---------------------------------------------------------
         # Accept an existing Lightning checkpoint path so interrupted

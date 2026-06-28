@@ -76,10 +76,10 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
         self.assertEqual(loaded_config["max_len"], 16)
         self.assertTrue(torch.equal(model.we.weight, loaded_model.we.weight))
 
-    def test_load_pytorch_model_rebuilds_position_buffer_for_new_max_len(self) -> None:
+    def test_load_pytorch_model_applies_requested_max_len_metadata(self) -> None:
         # ---------------------------------------------------------
-        # Keep learned weights while replacing only the deterministic
-        # sinusoidal position buffer for a new context length.
+        # Keep learned weights while applying the requested context
+        # length metadata used by RoPE training and datasets.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir)
@@ -104,7 +104,7 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
                 max_len=32,
             )
 
-        self.assertEqual(loaded_model.pe.pe.size(dim=0), 32)
+        self.assertEqual(loaded_model.max_len, 32)
         self.assertTrue(torch.equal(model.we.weight, loaded_model.we.weight))
 
     def test_push_uses_hub_model_repo_and_only_allows_artifacts(self) -> None:

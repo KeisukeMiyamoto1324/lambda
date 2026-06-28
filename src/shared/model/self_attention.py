@@ -20,6 +20,9 @@ class Attention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
 
+        if self.head_dim % 2 != 0:
+            raise ValueError("head_dim must be even for rotary positional embeddings")
+
         # ---------------------------------------------------------
         # Project inputs into query, key, and value spaces and merge
         # the heads back into the model dimension after attention.
@@ -28,6 +31,9 @@ class Attention(nn.Module):
         self.W_k = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
         self.W_v = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
         self.W_o = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
+        rotary_indexes = torch.arange(start=0, end=self.head_dim, step=2).float()
+        rotary_frequencies = 1.0 / (10000.0 ** (rotary_indexes / self.head_dim))
+        self.register_buffer("rotary_frequencies", rotary_frequencies)
 
     def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
         # ---------------------------------------------------------
@@ -47,21 +53,54 @@ class Attention(nn.Module):
         transposed = x.transpose(1, 2).contiguous()
         return transposed.view(batch_size, seq_len, self.d_model)
 
+    def _apply_rotary_position(
+        self,
+        x: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        # ---------------------------------------------------------
+        # Rotate each query/key pair with token positions while
+        # keeping values unchanged for scaled dot-product attention.
+        # ---------------------------------------------------------
+        angles = position_ids.to(device=x.device).float()[:, None, :, None] * self.rotary_frequencies[
+            None,
+            None,
+            None,
+            :,
+        ]
+        cosine = torch.cos(angles).to(dtype=x.dtype)
+        sine = torch.sin(angles).to(dtype=x.dtype)
+        even_values = x[..., 0::2]
+        odd_values = x[..., 1::2]
+        rotated = torch.stack(
+            (
+                even_values * cosine - odd_values * sine,
+                even_values * sine + odd_values * cosine,
+            ),
+            dim=-1,
+        )
+        return rotated.flatten(start_dim=-2)
+
     def forward(
         self,
-        encoding_for_q: torch.Tensor,
-        encoding_for_k: torch.Tensor,
-        encoding_for_v: torch.Tensor,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
         is_causal: bool = False,
         attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Create the projected queries, keys, and values for each
-        # attention head from the incoming hidden states.
+        # attention head and apply RoPE to queries and keys.
         # ---------------------------------------------------------
-        q = self._split_heads(self.W_q(encoding_for_q))
-        k = self._split_heads(self.W_k(encoding_for_k))
-        v = self._split_heads(self.W_v(encoding_for_v))
+        q = self._apply_rotary_position(
+            self._split_heads(self.W_q(hidden_states)),
+            position_ids=position_ids,
+        )
+        k = self._apply_rotary_position(
+            self._split_heads(self.W_k(hidden_states)),
+            position_ids=position_ids,
+        )
+        v = self._split_heads(self.W_v(hidden_states))
 
         # ---------------------------------------------------------
         # Use PyTorch's fused scaled dot-product attention so large
@@ -84,19 +123,24 @@ class Attention(nn.Module):
 
     def forward_with_cache(
         self,
-        encoding_for_q: torch.Tensor,
-        encoding_for_k: torch.Tensor,
-        encoding_for_v: torch.Tensor,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
         past_key_value: LayerKeyValueCache | None,
         is_causal: bool = False,
     ) -> tuple[torch.Tensor, LayerKeyValueCache]:
         # ---------------------------------------------------------
-        # Project the current tokens and append previous keys and
-        # values so generation can avoid recomputing old states.
+        # Project the current tokens, rotate the current keys, and
+        # append cache entries that already include RoPE positions.
         # ---------------------------------------------------------
-        q = self._split_heads(self.W_q(encoding_for_q))
-        current_k = self._split_heads(self.W_k(encoding_for_k))
-        current_v = self._split_heads(self.W_v(encoding_for_v))
+        q = self._apply_rotary_position(
+            self._split_heads(self.W_q(hidden_states)),
+            position_ids=position_ids,
+        )
+        current_k = self._apply_rotary_position(
+            self._split_heads(self.W_k(hidden_states)),
+            position_ids=position_ids,
+        )
+        current_v = self._split_heads(self.W_v(hidden_states))
 
         k = current_k
         v = current_v
