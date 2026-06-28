@@ -15,21 +15,22 @@ class FeedForward(nn.Module):
         super().__init__()
 
         # ---------------------------------------------------------
-        # Use the standard Transformer feed-forward sublayer so each
-        # token can be transformed independently after attention.
+        # Use SwiGLU so the feed-forward path can gate hidden
+        # features before projecting them back to the model width.
         # ---------------------------------------------------------
-        self.linear_1 = nn.Linear(in_features=d_model, out_features=d_ff)
-        self.activation = nn.GELU()
-        self.linear_2 = nn.Linear(in_features=d_ff, out_features=d_model)
+        self.up_projection = nn.Linear(in_features=d_model, out_features=d_ff)
+        self.gate_projection = nn.Linear(in_features=d_model, out_features=d_ff)
+        self.activation = nn.SiLU()
+        self.down_projection = nn.Linear(in_features=d_ff, out_features=d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Expand the channel dimension, apply a non-linearity, and
-        # project back to the model dimension.
+        # Gate the expanded hidden features with SiLU before the
+        # final projection, matching the SwiGLU FFN structure.
         # ---------------------------------------------------------
-        hidden = self.linear_1(x)
-        activated = self.activation(hidden)
-        return self.linear_2(activated)
+        hidden = self.up_projection(x)
+        gate = self.activation(self.gate_projection(x))
+        return self.down_projection(hidden * gate)
 
 
 class DecoderBlock(nn.Module):

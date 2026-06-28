@@ -13,7 +13,7 @@ from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.model.transformer import DecoderOnlyTransformer
 
 
-def build_model_config() -> dict[str, int | float]:
+def build_model_config() -> dict[str, int | float | str]:
     # ---------------------------------------------------------
     # Build a compact model config shared by PyTorch artifact tests
     # so direct model loading stays fast.
@@ -24,6 +24,7 @@ def build_model_config() -> dict[str, int | float]:
         "num_layers": 2,
         "num_heads": 2,
         "d_ff": 16,
+        "ffn_type": "swiglu",
         "learning_rate": 0.1,
         "pad_token_id": 0,
         "bos_token_id": 1,

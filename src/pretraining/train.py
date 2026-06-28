@@ -303,6 +303,7 @@ def main() -> None:
         "num_layers": args.num_layers,
         "num_heads": args.num_heads,
         "d_ff": args.d_ff,
+        "ffn_type": "swiglu",
         "learning_rate": args.learning_rate,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,

@@ -13,7 +13,7 @@ from src.shared.model.transformer import DecoderOnlyTransformer
 def save_chat_model(
     model: DecoderOnlyTransformer,
     model_dir: Path,
-    model_config: dict[str, int | float],
+    model_config: dict[str, int | float | str],
     args: argparse.Namespace,
     pad_token_id: int,
     bos_token_id: int,

@@ -44,7 +44,7 @@ def build_model_config(
     pad_token_id: int,
     bos_token_id: int,
     eos_token_id: int,
-) -> dict[str, int | float]:
+) -> dict[str, int | float | str]:
     # ---------------------------------------------------------
     # Build the compact config used by legacy and Hugging Face
     # artifact writers after posttraining completes.
@@ -55,7 +55,8 @@ def build_model_config(
         "d_model": model.we.embedding_dim,
         "num_layers": len(model.blocks),
         "num_heads": first_block.attention.num_heads,
-        "d_ff": first_block.feed_forward.linear_1.out_features,
+        "d_ff": first_block.feed_forward.up_projection.out_features,
+        "ffn_type": "swiglu",
         "learning_rate": learning_rate,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
@@ -69,7 +70,7 @@ def load_base_model(
     learning_rate: float,
     max_len: int,
     accelerator: str,
-) -> tuple[DecoderOnlyTransformer, dict[str, int | float]]:
+) -> tuple[DecoderOnlyTransformer, dict[str, int | float | str]]:
     # ---------------------------------------------------------
     # Load PyTorch model artifacts directly and prepare every layer
     # for fine tuning without a model wrapper.

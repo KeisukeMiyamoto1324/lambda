@@ -268,6 +268,7 @@ def main() -> None:
         "global_batch_size": args.batch_size * device_count,
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "global_effective_batch_size": args.batch_size * args.gradient_accumulation_steps * device_count,
+        "ffn_type": "swiglu",
         "lr_schedule": "warmup_cosine",
         "lr_warmup_steps": args.lr_warmup_steps,
         "min_learning_rate": min_learning_rate,
