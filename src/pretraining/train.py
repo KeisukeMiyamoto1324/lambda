@@ -495,7 +495,6 @@ def main() -> None:
     tokenizer.save_pretrained(path=model_dir)
 
     # ---------------------------------------------------------
-    # ---------------------------------------------------------
     # Optionally publish only the PyTorch model artifacts and
     # tokenizer files. Python source files are not uploaded.
     # ---------------------------------------------------------
