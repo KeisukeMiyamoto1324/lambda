@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.pretraining.cli import parse_args
 from src.shared.packed_dataset import build_tokenized_cache
-from src.shared.packed_dataset import DatasetEpochCallback
 from src.shared.packed_dataset import LocalTokenizedDataset
 from src.shared.packed_dataset import PACKING_VERSION
 from src.shared.packed_dataset import PackedCorpusDataset
@@ -111,6 +110,7 @@ def main() -> None:
         split_indexes=train_split_indexes,
         shuffle_buffer_size=SHUFFLE_BUFFER_SIZE,
         shuffle_seed=SHUFFLE_SEED,
+        repeat=True,
     )
     validation_source_dataset = PackedCorpusDataset(
         corpus_case=PRETRAINING_CORPUS_CASE,
@@ -156,7 +156,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=accelerator == "cuda",
-        persistent_workers=False,
+        persistent_workers=args.num_workers > 0,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -221,7 +221,6 @@ def main() -> None:
             tokenizer=tokenizer,
             output_dir=model_dir / "validation-generations",
         ),
-        DatasetEpochCallback(dataset=train_dataset),
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="step-{step}",

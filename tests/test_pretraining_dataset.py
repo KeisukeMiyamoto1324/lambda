@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 import random
 import tempfile
@@ -332,10 +333,10 @@ class PretrainingDatasetTest(unittest.TestCase):
             ],
         )
 
-    def test_packed_corpus_changes_shuffle_order_by_epoch(self) -> None:
+    def test_packed_corpus_repeats_with_new_shuffle_order(self) -> None:
         # ---------------------------------------------------------
         # Use a reproducible but distinct shuffle seed for every
-        # corpus pass in multi-epoch mid-training.
+        # repeated corpus pass inside persistent workers.
         # ---------------------------------------------------------
         dataset = PretrainingCorpusDataset(
             corpus_case=build_case(name="custom"),
@@ -346,21 +347,20 @@ class PretrainingDatasetTest(unittest.TestCase):
             eos_token_id=2,
             shuffle_buffer_size=10000,
             shuffle_seed=17,
+            repeat=True,
         )
         fake_dataset = FakeStreamingDataset(
             samples=[{"text": str(value)} for value in range(10, 20)]
         )
 
         with patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset):
-            first_epoch = [example[0][1].item() for example in dataset]
-            dataset.set_epoch(epoch_index=1)
-            second_epoch = [example[0][1].item() for example in dataset]
-            dataset.set_epoch(epoch_index=0)
-            repeated_first_epoch = [example[0][1].item() for example in dataset]
+            repeated_examples = list(islice(dataset, 20))
 
-        self.assertNotEqual(first_epoch, second_epoch)
-        self.assertEqual(first_epoch, repeated_first_epoch)
-        self.assertEqual(sorted(first_epoch), list(range(10, 20)))
+        first_pass = [example[0][1].item() for example in repeated_examples[:10]]
+        second_pass = [example[0][1].item() for example in repeated_examples[10:]]
+        self.assertNotEqual(first_pass, second_pass)
+        self.assertEqual(sorted(first_pass), list(range(10, 20)))
+        self.assertEqual(sorted(second_pass), list(range(10, 20)))
 
     def test_build_tokenized_cache_keeps_metadata(self) -> None:
         # ---------------------------------------------------------
@@ -405,6 +405,23 @@ class PretrainingDatasetTest(unittest.TestCase):
                     max_len=2,
                     num_samples=2,
                     metadata={"corpus_signature": "def456"},
+                )
+
+    def test_build_tokenized_cache_rejects_short_finite_dataset(self) -> None:
+        # ---------------------------------------------------------
+        # Keep validation cache sources finite so a too-small
+        # validation split fails instead of repeating samples.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "validation.pt"
+
+            with self.assertRaises(ValueError):
+                build_tokenized_cache(
+                    dataset=FixedTokenDataset(),
+                    path=path,
+                    num_samples=3,
+                    max_len=2,
+                    metadata={"corpus_signature": "abc123"},
                 )
 
 

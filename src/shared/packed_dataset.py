@@ -4,8 +4,6 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
-import lightning as L
-from lightning.pytorch.callbacks import Callback
 from torch.utils.data import Dataset
 from torch.utils.data import IterableDataset
 from torch.utils.data import get_worker_info
@@ -24,24 +22,6 @@ BUCKET_PACKING_BUFFER_SEGMENTS = 4096
 BUCKET_PACKING_SEED = 17
 
 
-class DatasetEpochCallback(Callback):
-    def __init__(self, dataset: "PackedCorpusDataset") -> None:
-        super().__init__()
-        self.dataset = dataset
-
-    def on_train_epoch_start(
-        self,
-        trainer: L.Trainer,
-        pl_module: L.LightningModule,
-    ) -> None:
-        # ---------------------------------------------------------
-        # Use the Lightning epoch index to select the deterministic
-        # shuffle order, including after checkpoint resume.
-        # ---------------------------------------------------------
-        del pl_module
-        self.dataset.set_epoch(epoch_index=trainer.current_epoch)
-
-
 class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
     def __init__(
         self,
@@ -55,6 +35,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         split_indexes: tuple[int, ...] = (0,),
         shuffle_buffer_size: int = 0,
         shuffle_seed: int = 0,
+        repeat: bool = False,
     ) -> None:
         super().__init__()
 
@@ -72,16 +53,27 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         self.split_indexes = split_indexes
         self.shuffle_buffer_size = shuffle_buffer_size
         self.shuffle_seed = shuffle_seed
-        self.epoch_index = 0
-
-    def set_epoch(self, epoch_index: int) -> None:
-        # ---------------------------------------------------------
-        # Change only the shuffle seed between epochs so repeated
-        # corpus passes remain deterministic and reproducible.
-        # ---------------------------------------------------------
-        self.epoch_index = epoch_index
+        self.repeat = repeat
 
     def __iter__(self) -> Iterator[PackedTrainingExample]:
+        # ---------------------------------------------------------
+        # Training can repeat the finite corpus inside each worker
+        # while validation keeps one finite pass for cache checks.
+        # ---------------------------------------------------------
+        repeat_index = 0
+
+        while True:
+            yield from self._iter_corpus_pass(repeat_index=repeat_index)
+
+            if not self.repeat:
+                break
+
+            repeat_index += 1
+
+    def _iter_corpus_pass(
+        self,
+        repeat_index: int,
+    ) -> Iterator[PackedTrainingExample]:
         # ---------------------------------------------------------
         # Open the configured corpus split as a streaming source so
         # samples are never materialized in local memory.
@@ -109,7 +101,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         # ---------------------------------------------------------
         if self.shuffle_buffer_size > 0:
             dataset = dataset.shuffle(
-                seed=self.shuffle_seed + self.epoch_index,
+                seed=self.shuffle_seed + repeat_index,
                 buffer_size=self.shuffle_buffer_size,
             )
 
