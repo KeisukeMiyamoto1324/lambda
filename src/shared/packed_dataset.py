@@ -7,7 +7,6 @@ from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from torch.utils.data import Dataset
 from torch.utils.data import IterableDataset
-from torch.utils.data import get_worker_info
 
 from src.shared.atomic_io import atomic_torch_save
 from src.shared.tokenizer import ByteLevelBPE
@@ -19,7 +18,7 @@ PackedTrainingExample = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Te
 PackedTrainingSegment = tuple[list[int], list[int], int]
 BUCKET_PACKING_BUFFER_SEGMENTS = 4096
 BUCKET_PACKING_SEED = 17
-StreamPartition = tuple[int, int]
+RankPartition = tuple[int, int]
 
 
 class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
@@ -115,10 +114,10 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
             )
 
         # ---------------------------------------------------------
-        # Keep every rank and DataLoader worker on a distinct HF
-        # streaming partition for finite and repeated training streams.
+        # Keep distributed ranks on distinct HF streaming partitions.
+        # HF IterableDataset handles DataLoader workers internally.
         # ---------------------------------------------------------
-        partition_count, partition_index = self._resolve_stream_partition()
+        partition_count, partition_index = self._resolve_rank_partition()
 
         if partition_count > 1:
             dataset = split_dataset_by_node(
@@ -148,14 +147,11 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         while len(segment_buffer) > 0:
             yield self._build_bucket_packed_example(segment_buffer=segment_buffer)
 
-    def _resolve_stream_partition(self) -> StreamPartition:
+    def _resolve_rank_partition(self) -> RankPartition:
         # ---------------------------------------------------------
-        # Combine DDP rank and DataLoader worker ids into one stable
-        # global worker id used for HF streaming partitioning.
+        # Resolve only the distributed rank partition. DataLoader
+        # worker partitioning is handled by the HF stream iterator.
         # ---------------------------------------------------------
-        worker_info = get_worker_info()
-        worker_count = 1 if worker_info is None else worker_info.num_workers
-        worker_index = 0 if worker_info is None else worker_info.id
         rank_count = 1
         rank_index = 0
 
@@ -163,9 +159,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
             rank_count = torch.distributed.get_world_size()
             rank_index = torch.distributed.get_rank()
 
-        shard_count = rank_count * worker_count
-        shard_index = rank_index * worker_count + worker_index
-        return shard_count, shard_index
+        return rank_count, rank_index
 
     def _contains_partition(
         self,

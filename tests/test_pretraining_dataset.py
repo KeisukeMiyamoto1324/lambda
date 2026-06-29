@@ -167,10 +167,10 @@ class PretrainingDatasetTest(unittest.TestCase):
         )
         self.assertIn(split_index, dataset.split_indexes)
 
-    def test_pretraining_corpus_shards_streaming_dataset_by_worker(self) -> None:
+    def test_pretraining_corpus_does_not_manually_split_workers(self) -> None:
         # ---------------------------------------------------------
-        # Read only the current worker shard so parallel workers do
-        # not replay the same streaming samples.
+        # Avoid passing DataLoader workers to split_dataset_by_node
+        # because HF IterableDataset splits workers during iteration.
         # ---------------------------------------------------------
         corpus_case = build_case(name="custom")
         dataset = PretrainingCorpusDataset(
@@ -189,22 +189,21 @@ class PretrainingDatasetTest(unittest.TestCase):
                 {"text": "40"},
             ]
         )
-        worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": 1})()
 
         with (
             patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
-            patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
-            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
+            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node) as split,
         ):
             examples = list(iter(dataset))
 
         input_token_ids = [example[0][1].item() for example in examples]
-        self.assertEqual(sorted(input_token_ids), [20, 40])
+        self.assertEqual(sorted(input_token_ids), [10, 20, 30, 40])
+        split.assert_not_called()
 
-    def test_pretraining_corpus_shards_streaming_dataset_by_rank_and_worker(self) -> None:
+    def test_pretraining_corpus_splits_streaming_dataset_by_rank(self) -> None:
         # ---------------------------------------------------------
-        # Combine DDP rank and DataLoader worker ids so every
-        # process reads a distinct streaming shard.
+        # Split only by DDP rank. HF handles DataLoader worker
+        # partitioning inside the streaming dataset iterator.
         # ---------------------------------------------------------
         corpus_case = build_case(name="custom")
         dataset = PretrainingCorpusDataset(
@@ -227,11 +226,9 @@ class PretrainingDatasetTest(unittest.TestCase):
                 {"text": "80"},
             ]
         )
-        worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": 1})()
 
         with (
             patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
-            patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
             patch("torch.distributed.is_available", return_value=True),
             patch("torch.distributed.is_initialized", return_value=True),
             patch("torch.distributed.get_world_size", return_value=2),
@@ -241,45 +238,41 @@ class PretrainingDatasetTest(unittest.TestCase):
             examples = list(iter(dataset))
 
         input_token_ids = [example[0][1].item() for example in examples]
-        self.assertEqual(sorted(input_token_ids), [40, 80])
+        self.assertEqual(sorted(input_token_ids), [20, 40, 60, 80])
 
-    def test_repeating_corpus_keeps_worker_partitioning(self) -> None:
+    def test_repeating_corpus_does_not_manually_split_workers(self) -> None:
         # ---------------------------------------------------------
-        # Keep repeated training streams disjoint across workers so
-        # max-step training does not duplicate documents by worker.
+        # Keep repeated streams free from manual worker partitioning
+        # so HF does not split the same worker twice.
         # ---------------------------------------------------------
-        all_examples: list[int] = []
+        dataset = PretrainingCorpusDataset(
+            corpus_case=build_case(name="custom"),
+            tokenizer=FixedTokenizer(),
+            max_len=2,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+            shuffle_buffer_size=10000,
+            shuffle_seed=17,
+            repeat_forever=True,
+        )
+        fake_dataset = FakeStreamingDataset(
+            samples=[
+                {"text": "10"},
+                {"text": "20"},
+                {"text": "30"},
+                {"text": "40"},
+            ]
+        )
 
-        for worker_index in range(2):
-            dataset = PretrainingCorpusDataset(
-                corpus_case=build_case(name="custom"),
-                tokenizer=FixedTokenizer(),
-                max_len=2,
-                pad_token_id=0,
-                bos_token_id=1,
-                eos_token_id=2,
-                shuffle_buffer_size=10000,
-                shuffle_seed=17,
-                repeat_forever=True,
-            )
-            fake_dataset = FakeStreamingDataset(
-                samples=[
-                    {"text": "10"},
-                    {"text": "20"},
-                    {"text": "30"},
-                    {"text": "40"},
-                ]
-            )
-            worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": worker_index})()
+        with (
+            patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node) as split,
+        ):
+            examples = [example[0][1].item() for example in islice(dataset, 4)]
 
-            with (
-                patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
-                patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
-                patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
-            ):
-                all_examples.extend([example[0][1].item() for example in islice(dataset, 2)])
-
-        self.assertEqual(sorted(all_examples), [10, 20, 30, 40])
+        self.assertEqual(sorted(examples), [10, 20, 30, 40])
+        split.assert_not_called()
 
     def test_repeating_corpus_keeps_rank_partitioning(self) -> None:
         # ---------------------------------------------------------
@@ -321,37 +314,33 @@ class PretrainingDatasetTest(unittest.TestCase):
 
         self.assertEqual(sorted(all_examples), [10, 20, 30, 40])
 
-    def test_finite_shuffled_corpus_keeps_worker_shards_disjoint(self) -> None:
+    def test_finite_shuffled_corpus_does_not_manually_split_workers(self) -> None:
         # ---------------------------------------------------------
-        # Shuffle finite streams once before worker sharding so the
-        # combined worker outputs keep every sample exactly once.
+        # Keep finite worker splitting inside HF IterableDataset so
+        # default multi-worker training does not double-shard data.
         # ---------------------------------------------------------
-        all_examples: list[int] = []
+        dataset = PretrainingCorpusDataset(
+            corpus_case=build_case(name="custom"),
+            tokenizer=FixedTokenizer(),
+            max_len=2,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+            shuffle_buffer_size=10000,
+            shuffle_seed=17,
+        )
+        fake_dataset = FakeStreamingDataset(
+            samples=[{"text": str(value)} for value in range(10, 18)]
+        )
 
-        for worker_index in range(2):
-            dataset = PretrainingCorpusDataset(
-                corpus_case=build_case(name="custom"),
-                tokenizer=FixedTokenizer(),
-                max_len=2,
-                pad_token_id=0,
-                bos_token_id=1,
-                eos_token_id=2,
-                shuffle_buffer_size=10000,
-                shuffle_seed=17,
-            )
-            fake_dataset = FakeStreamingDataset(
-                samples=[{"text": str(value)} for value in range(10, 18)]
-            )
-            worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": worker_index})()
+        with (
+            patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node) as split,
+        ):
+            examples = [example[0][1].item() for example in dataset]
 
-            with (
-                patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
-                patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
-                patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
-            ):
-                all_examples.extend([example[0][1].item() for example in dataset])
-
-        self.assertEqual(sorted(all_examples), list(range(10, 18)))
+        self.assertEqual(sorted(examples), list(range(10, 18)))
+        split.assert_not_called()
 
     def test_pretraining_corpus_keeps_wikipedia_urls(self) -> None:
         # ---------------------------------------------------------
