@@ -98,12 +98,15 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         )
 
         # ---------------------------------------------------------
-        # Use shard ids for finite streams. Use them as seed ids for
-        # repeated streams so workers do not repeat uneven shards.
+        # Use one shuffle order for finite streams before sharding.
+        # Use shard ids as seed ids only for repeated streams.
         # ---------------------------------------------------------
         shard_count, shard_index = self._resolve_worker_shard()
         seed_offset = pass_index * shard_count if repeat_forever else pass_index
-        seed = self.shuffle_seed + seed_offset + shard_index
+        seed = self.shuffle_seed + seed_offset
+
+        if repeat_forever:
+            seed += shard_index
 
         if self.shuffle_buffer_size > 0:
             dataset = dataset.shuffle(

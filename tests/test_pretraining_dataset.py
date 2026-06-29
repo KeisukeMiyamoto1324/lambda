@@ -252,6 +252,37 @@ class PretrainingDatasetTest(unittest.TestCase):
 
         self.assertEqual(sorted(examples), [10, 20, 30, 40])
 
+    def test_finite_shuffled_corpus_keeps_worker_shards_disjoint(self) -> None:
+        # ---------------------------------------------------------
+        # Shuffle finite streams once before worker sharding so the
+        # combined worker outputs keep every sample exactly once.
+        # ---------------------------------------------------------
+        all_examples: list[int] = []
+
+        for worker_index in range(2):
+            dataset = PretrainingCorpusDataset(
+                corpus_case=build_case(name="custom"),
+                tokenizer=FixedTokenizer(),
+                max_len=2,
+                pad_token_id=0,
+                bos_token_id=1,
+                eos_token_id=2,
+                shuffle_buffer_size=10000,
+                shuffle_seed=17,
+            )
+            fake_dataset = FakeStreamingDataset(
+                samples=[{"text": str(value)} for value in range(10, 18)]
+            )
+            worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": worker_index})()
+
+            with (
+                patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+                patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
+            ):
+                all_examples.extend([example[0][1].item() for example in dataset])
+
+        self.assertEqual(sorted(all_examples), list(range(10, 18)))
+
     def test_pretraining_corpus_keeps_wikipedia_urls(self) -> None:
         # ---------------------------------------------------------
         # Keep Wikipedia documents because the single FineWeb corpus
