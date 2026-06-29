@@ -15,6 +15,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--lr-warmup-steps", type=int, default=2000)
+    parser.add_argument("--min-learning-rate-ratio", type=float, default=0.2)
     parser.add_argument("--batch-size", type=int, default=72)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=10240)
@@ -71,6 +73,14 @@ def parse_args() -> argparse.Namespace:
         require(args.checkpoint_every_n_steps > 0, "--checkpoint-every-n-steps must be greater than 0")
         require(args.metric_log_every_n_steps > 0, "--metric-log-every-n-steps must be greater than 0")
         require(args.loss_chunk_size > 0, "--loss-chunk-size must be greater than 0")
+        require(
+            0 <= args.lr_warmup_steps < args.max_steps,
+            "--lr-warmup-steps must be greater than or equal to 0 and less than --max-steps",
+        )
+        require(
+            0.0 <= args.min_learning_rate_ratio <= 1.0,
+            "--min-learning-rate-ratio must be between 0.0 and 1.0",
+        )
     except ValueError as error:
         parser.error(str(error))
 

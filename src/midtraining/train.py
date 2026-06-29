@@ -73,6 +73,7 @@ def main() -> None:
     pad_token_id = tokenizer.token_to_id(tokenizer.pad_token)
     bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
     eos_token_id = tokenizer.token_to_id(tokenizer.eos_token)
+    min_learning_rate = args.learning_rate * args.min_learning_rate_ratio
 
     # ---------------------------------------------------------
     # Prepare output, validation cache, and deterministic corpus
@@ -169,8 +170,8 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Rebuild the pretrained architecture and apply a fixed
-    # mid-training learning rate.
+    # Rebuild the pretrained architecture and apply the same warmup
+    # and cosine decay schedule used by pretraining.
     # ---------------------------------------------------------
     model, _ = load_pytorch_model(
         model_dir=source_model_dir,
@@ -178,6 +179,9 @@ def main() -> None:
         learning_rate=args.learning_rate,
         max_len=max_len,
         use_fused_optimizer=accelerator == "cuda",
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_total_steps=args.max_steps,
+        min_learning_rate=min_learning_rate,
     )
     model.loss_chunk_size = args.loss_chunk_size
 
@@ -241,7 +245,7 @@ def main() -> None:
 
     # ---------------------------------------------------------
     # Save final weights with inherited architecture metadata and
-    # the exact fixed-LR, corpus, and step budget details.
+    # the exact scheduled-LR, corpus, and step budget details.
     # ---------------------------------------------------------
     if not trainer.is_global_zero:
         return
@@ -258,7 +262,10 @@ def main() -> None:
         "global_batch_size": args.batch_size * device_count,
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "global_effective_batch_size": args.batch_size * args.gradient_accumulation_steps * device_count,
-        "lr_schedule": "fixed",
+        "lr_schedule": "warmup_cosine",
+        "lr_warmup_steps": args.lr_warmup_steps,
+        "min_learning_rate": min_learning_rate,
+        "min_learning_rate_ratio": args.min_learning_rate_ratio,
         "loss_chunk_size": args.loss_chunk_size,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
@@ -279,13 +286,10 @@ def main() -> None:
     }
 
     # ---------------------------------------------------------
-    # Remove the inherited pretraining scheduler fields because
-    # mid-training uses one fixed learning rate for all epochs.
+    # Remove obsolete fields from older mid-training artifacts while
+    # keeping the active scheduler metadata written above.
     # ---------------------------------------------------------
     obsolete_config_keys = [
-        "lr_warmup_steps",
-        "min_learning_rate",
-        "min_learning_rate_ratio",
         "midtraining_epochs",
         "midtraining_completed_epochs",
     ]

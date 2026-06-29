@@ -97,6 +97,35 @@ class MidtrainingTest(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         parse_args()
 
+    def test_parse_args_rejects_invalid_lr_schedule(self) -> None:
+        # ---------------------------------------------------------
+        # Reject schedule values that cannot form a bounded warmup
+        # and decay interval before training starts.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+
+            for file_name in ["model.pth", "model_config.json", "tokenizer.json"]:
+                (model_dir / file_name).touch()
+
+            invalid_cases = [
+                ("--lr-warmup-steps", "10240"),
+                ("--min-learning-rate-ratio", "1.1"),
+            ]
+
+            for flag, value in invalid_cases:
+                argv = [
+                    "train.py",
+                    "--model-path",
+                    str(model_dir),
+                    flag,
+                    value,
+                ]
+
+                with self.subTest(flag=flag), patch("sys.argv", argv), patch("sys.stderr", io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        parse_args()
+
     def test_parse_args_accepts_longer_context_than_source_model(self) -> None:
         # ---------------------------------------------------------
         # Allow midtraining to request longer context than the saved

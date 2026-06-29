@@ -109,6 +109,40 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
         self.assertEqual(loaded_config["max_len"], 4)
         self.assertEqual(logits.shape, (1, 8, 12))
 
+    def test_load_pytorch_model_accepts_lr_schedule_settings(self) -> None:
+        # ---------------------------------------------------------
+        # Pass caller-specific scheduler values through the shared
+        # loader while preserving the saved artifact metadata.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir)
+            model = DecoderOnlyTransformer(
+                num_tokens=12,
+                d_model=8,
+                num_layers=2,
+                num_heads=2,
+                d_ff=16,
+                pad_token_id=0,
+            )
+            torch.save(model.state_dict(), output_path / "model.pth")
+            (output_path / "model_config.json").write_text(
+                json.dumps(build_model_config()),
+                encoding="utf-8",
+            )
+
+            loaded_model, loaded_config = load_pytorch_model(
+                model_dir=output_path,
+                vocab_size=12,
+                lr_warmup_steps=2,
+                lr_total_steps=10,
+                min_learning_rate=0.02,
+            )
+
+        self.assertEqual(loaded_config["learning_rate"], 0.1)
+        self.assertEqual(loaded_model.lr_warmup_steps, 2)
+        self.assertEqual(loaded_model.lr_total_steps, 10)
+        self.assertEqual(loaded_model.min_learning_rate, 0.02)
+
     def test_push_uses_hub_model_repo_and_only_allows_artifacts(self) -> None:
         # ---------------------------------------------------------
         # Mock the Hub client so publishing behavior is verified
