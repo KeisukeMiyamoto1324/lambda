@@ -357,9 +357,9 @@ class LocalTokenizedDataset(Dataset[PackedTrainingExample]):
     def __len__(self) -> int:
         # ---------------------------------------------------------
         # Return the number of fixed validation examples available
-        # from the cached tensor file.
+        # from the cached sample list.
         # ---------------------------------------------------------
-        return self.inputs.size(dim=0)
+        return len(self.inputs)
 
     def __getitem__(self, index: int) -> PackedTrainingExample:
         # ---------------------------------------------------------
