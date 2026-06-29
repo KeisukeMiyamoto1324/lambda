@@ -4,6 +4,7 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 from torch.utils.data import Dataset
 from torch.utils.data import IterableDataset
 from torch.utils.data import get_worker_info
@@ -18,7 +19,7 @@ PackedTrainingExample = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Te
 PackedTrainingSegment = tuple[list[int], list[int], int]
 BUCKET_PACKING_BUFFER_SEGMENTS = 4096
 BUCKET_PACKING_SEED = 17
-WorkerShard = tuple[int, int]
+StreamPartition = tuple[int, int]
 
 
 class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
@@ -64,7 +65,6 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         while True:
             yield from self._iter_corpus_pass(
                 pass_index=pass_index,
-                repeat_forever=self.repeat_forever,
             )
             pass_index += 1
 
@@ -74,7 +74,6 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
     def _iter_corpus_pass(
         self,
         pass_index: int,
-        repeat_forever: bool,
     ) -> Iterator[PackedTrainingExample]:
         # ---------------------------------------------------------
         # Open the configured corpus split as a streaming source so
@@ -88,6 +87,12 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         )
 
         # ---------------------------------------------------------
+        # Split remote sources into smaller HF streaming shards before
+        # rank and worker partitioning.
+        # ---------------------------------------------------------
+        dataset = dataset.reshard()
+
+        # ---------------------------------------------------------
         # Route each streamed document through the deterministic
         # train-validation split before optional training shuffle.
         # ---------------------------------------------------------
@@ -98,15 +103,10 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         )
 
         # ---------------------------------------------------------
-        # Use one shuffle order for finite streams before sharding.
-        # Use shard ids as seed ids only for repeated streams.
+        # Use the same pass seed in every process. HF distributed
+        # splitting uses that shared order to keep partitions disjoint.
         # ---------------------------------------------------------
-        shard_count, shard_index = self._resolve_worker_shard()
-        seed_offset = pass_index * shard_count if repeat_forever else pass_index
-        seed = self.shuffle_seed + seed_offset
-
-        if repeat_forever:
-            seed += shard_index
+        seed = self.shuffle_seed + pass_index
 
         if self.shuffle_buffer_size > 0:
             dataset = dataset.shuffle(
@@ -114,8 +114,18 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
                 buffer_size=self.shuffle_buffer_size,
             )
 
-        if shard_count > 1 and not repeat_forever:
-            dataset = dataset.shard(num_shards=shard_count, index=shard_index)
+        # ---------------------------------------------------------
+        # Keep every rank and DataLoader worker on a distinct HF
+        # streaming partition for finite and repeated training streams.
+        # ---------------------------------------------------------
+        partition_count, partition_index = self._resolve_stream_partition()
+
+        if partition_count > 1:
+            dataset = split_dataset_by_node(
+                dataset,
+                rank=partition_index,
+                world_size=partition_count,
+            )
 
         segment_buffer: list[PackedTrainingSegment] = []
         segment_index = 0
@@ -138,10 +148,10 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         while len(segment_buffer) > 0:
             yield self._build_bucket_packed_example(segment_buffer=segment_buffer)
 
-    def _resolve_worker_shard(self) -> WorkerShard:
+    def _resolve_stream_partition(self) -> StreamPartition:
         # ---------------------------------------------------------
         # Combine DDP rank and DataLoader worker ids into one stable
-        # global worker id used for sharding or stream seeding.
+        # global worker id used for HF streaming partitioning.
         # ---------------------------------------------------------
         worker_info = get_worker_info()
         worker_count = 1 if worker_info is None else worker_info.num_workers

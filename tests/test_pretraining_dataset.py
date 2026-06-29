@@ -57,6 +57,13 @@ class FakeStreamingDataset:
             samples=[sample for sample in self.samples if predicate(sample)]
         )
 
+    def reshard(self) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Keep the fake stream unchanged while matching the HF
+        # streaming API used before distributed partitioning.
+        # ---------------------------------------------------------
+        return self
+
     def shard(self, num_shards: int, index: int) -> "FakeStreamingDataset":
         # ---------------------------------------------------------
         # Return one deterministic worker shard so streaming worker
@@ -79,6 +86,18 @@ class FakeStreamingDataset:
         # Yield samples one by one like a streaming dataset.
         # ---------------------------------------------------------
         return iter(self.samples)
+
+
+def fake_split_dataset_by_node(
+    dataset: FakeStreamingDataset,
+    rank: int,
+    world_size: int,
+) -> FakeStreamingDataset:
+    # ---------------------------------------------------------
+    # Mirror the disjoint sample partition needed by tests without
+    # depending on Hugging Face private iterable internals.
+    # ---------------------------------------------------------
+    return dataset.shard(num_shards=world_size, index=rank)
 
 
 def build_case(
@@ -172,9 +191,12 @@ class PretrainingDatasetTest(unittest.TestCase):
         )
         worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": 1})()
 
-        with patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset):
-            with patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info):
-                examples = list(iter(dataset))
+        with (
+            patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+            patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
+            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
+        ):
+            examples = list(iter(dataset))
 
         input_token_ids = [example[0][1].item() for example in examples]
         self.assertEqual(sorted(input_token_ids), [20, 40])
@@ -214,43 +236,90 @@ class PretrainingDatasetTest(unittest.TestCase):
             patch("torch.distributed.is_initialized", return_value=True),
             patch("torch.distributed.get_world_size", return_value=2),
             patch("torch.distributed.get_rank", return_value=1),
+            patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
         ):
             examples = list(iter(dataset))
 
         input_token_ids = [example[0][1].item() for example in examples]
         self.assertEqual(sorted(input_token_ids), [40, 80])
 
-    def test_repeating_corpus_uses_worker_seed_without_sharding(self) -> None:
+    def test_repeating_corpus_keeps_worker_partitioning(self) -> None:
         # ---------------------------------------------------------
-        # Let repeated training streams read the full corpus with a
-        # worker-specific seed instead of repeating uneven shards.
+        # Keep repeated training streams disjoint across workers so
+        # max-step training does not duplicate documents by worker.
         # ---------------------------------------------------------
-        dataset = PretrainingCorpusDataset(
-            corpus_case=build_case(name="custom"),
-            tokenizer=FixedTokenizer(),
-            max_len=2,
-            pad_token_id=0,
-            bos_token_id=1,
-            eos_token_id=2,
-            shuffle_buffer_size=10000,
-            shuffle_seed=17,
-            repeat_forever=True,
-        )
-        fake_dataset = FakeStreamingDataset(
-            samples=[
-                {"text": "10"},
-                {"text": "20"},
-                {"text": "30"},
-                {"text": "40"},
-            ]
-        )
-        worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": 1})()
+        all_examples: list[int] = []
 
-        with patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset):
-            with patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info):
-                examples = [example[0][1].item() for example in islice(dataset, 4)]
+        for worker_index in range(2):
+            dataset = PretrainingCorpusDataset(
+                corpus_case=build_case(name="custom"),
+                tokenizer=FixedTokenizer(),
+                max_len=2,
+                pad_token_id=0,
+                bos_token_id=1,
+                eos_token_id=2,
+                shuffle_buffer_size=10000,
+                shuffle_seed=17,
+                repeat_forever=True,
+            )
+            fake_dataset = FakeStreamingDataset(
+                samples=[
+                    {"text": "10"},
+                    {"text": "20"},
+                    {"text": "30"},
+                    {"text": "40"},
+                ]
+            )
+            worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": worker_index})()
 
-        self.assertEqual(sorted(examples), [10, 20, 30, 40])
+            with (
+                patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+                patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
+                patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
+            ):
+                all_examples.extend([example[0][1].item() for example in islice(dataset, 2)])
+
+        self.assertEqual(sorted(all_examples), [10, 20, 30, 40])
+
+    def test_repeating_corpus_keeps_rank_partitioning(self) -> None:
+        # ---------------------------------------------------------
+        # Keep repeated training streams disjoint across distributed
+        # ranks instead of relying on different shuffle orders.
+        # ---------------------------------------------------------
+        all_examples: list[int] = []
+
+        for rank_index in range(2):
+            dataset = PretrainingCorpusDataset(
+                corpus_case=build_case(name="custom"),
+                tokenizer=FixedTokenizer(),
+                max_len=2,
+                pad_token_id=0,
+                bos_token_id=1,
+                eos_token_id=2,
+                shuffle_buffer_size=10000,
+                shuffle_seed=17,
+                repeat_forever=True,
+            )
+            fake_dataset = FakeStreamingDataset(
+                samples=[
+                    {"text": "10"},
+                    {"text": "20"},
+                    {"text": "30"},
+                    {"text": "40"},
+                ]
+            )
+
+            with (
+                patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+                patch("torch.distributed.is_available", return_value=True),
+                patch("torch.distributed.is_initialized", return_value=True),
+                patch("torch.distributed.get_world_size", return_value=2),
+                patch("torch.distributed.get_rank", return_value=rank_index),
+                patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
+            ):
+                all_examples.extend([example[0][1].item() for example in islice(dataset, 2)])
+
+        self.assertEqual(sorted(all_examples), [10, 20, 30, 40])
 
     def test_finite_shuffled_corpus_keeps_worker_shards_disjoint(self) -> None:
         # ---------------------------------------------------------
@@ -278,6 +347,7 @@ class PretrainingDatasetTest(unittest.TestCase):
             with (
                 patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
                 patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info),
+                patch("src.shared.packed_dataset.split_dataset_by_node", side_effect=fake_split_dataset_by_node),
             ):
                 all_examples.extend([example[0][1].item() for example in dataset])
 
