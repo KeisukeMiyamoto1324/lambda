@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.shared.model.kv_cache import LayerKeyValueCache
+from src.shared.model.position_encoding import RotaryPositionEmbedding
 
 
 class Attention(nn.Module):
@@ -19,6 +20,7 @@ class Attention(nn.Module):
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
+        self.rotary_position_embedding = RotaryPositionEmbedding(head_dim=self.head_dim)
 
         # ---------------------------------------------------------
         # Project inputs into query, key, and value spaces and merge
@@ -54,6 +56,7 @@ class Attention(nn.Module):
         encoding_for_v: torch.Tensor,
         is_causal: bool = False,
         attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Create the projected queries, keys, and values for each
@@ -62,6 +65,13 @@ class Attention(nn.Module):
         q = self._split_heads(self.W_q(encoding_for_q))
         k = self._split_heads(self.W_k(encoding_for_k))
         v = self._split_heads(self.W_v(encoding_for_v))
+
+        # ---------------------------------------------------------
+        # Apply rotary positions to queries and keys before the
+        # attention scores are computed; values stay unrotated.
+        # ---------------------------------------------------------
+        q = self.rotary_position_embedding(q, position_ids=position_ids)
+        k = self.rotary_position_embedding(k, position_ids=position_ids)
 
         # ---------------------------------------------------------
         # Use PyTorch's fused scaled dot-product attention so large
@@ -89,6 +99,7 @@ class Attention(nn.Module):
         encoding_for_v: torch.Tensor,
         past_key_value: LayerKeyValueCache | None,
         is_causal: bool = False,
+        position_offset: int = 0,
     ) -> tuple[torch.Tensor, LayerKeyValueCache]:
         # ---------------------------------------------------------
         # Project the current tokens and append previous keys and
@@ -97,6 +108,13 @@ class Attention(nn.Module):
         q = self._split_heads(self.W_q(encoding_for_q))
         current_k = self._split_heads(self.W_k(encoding_for_k))
         current_v = self._split_heads(self.W_v(encoding_for_v))
+
+        # ---------------------------------------------------------
+        # Rotate only the newly projected queries and keys. Cached
+        # keys have already been stored with their final positions.
+        # ---------------------------------------------------------
+        q = self.rotary_position_embedding(q, position_offset=position_offset)
+        current_k = self.rotary_position_embedding(current_k, position_offset=position_offset)
 
         k = current_k
         v = current_v

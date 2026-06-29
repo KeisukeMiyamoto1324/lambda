@@ -7,12 +7,96 @@ from unittest.mock import patch
 import torch
 
 from src.pretraining.train import parse_args
+from src.shared.model.position_encoding import RotaryPositionEmbedding
+from src.shared.model.self_attention import Attention
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.transformer import build_packed_attention_mask
 from src.shared.model.transformer import resolve_warmup_cosine_learning_rate
 
 
 class PretrainingTrainTest(unittest.TestCase):
+    def test_rotary_position_embedding_keeps_shape_dtype_and_device(self) -> None:
+        # ---------------------------------------------------------
+        # Rotate query or key heads without changing the tensor
+        # contract expected by scaled dot-product attention.
+        # ---------------------------------------------------------
+        rotary_position_embedding = RotaryPositionEmbedding(head_dim=4)
+        x = torch.ones((2, 3, 5, 4), dtype=torch.float32)
+        rotated = rotary_position_embedding(x)
+
+        self.assertEqual(rotated.shape, x.shape)
+        self.assertEqual(rotated.dtype, x.dtype)
+        self.assertEqual(rotated.device, x.device)
+
+    def test_rotary_position_embedding_accepts_packed_position_ids(self) -> None:
+        # ---------------------------------------------------------
+        # Use explicit per-token positions so packed samples can
+        # reset each segment to position zero inside one batch.
+        # ---------------------------------------------------------
+        rotary_position_embedding = RotaryPositionEmbedding(head_dim=4)
+        x = torch.ones((1, 2, 4, 4), dtype=torch.float32)
+        position_ids = torch.tensor([[0, 1, 0, 1]], dtype=torch.long)
+        rotated = rotary_position_embedding(x, position_ids=position_ids)
+
+        self.assertEqual(rotated.shape, x.shape)
+        self.assertFalse(torch.equal(rotated[:, :, 0, :], rotated[:, :, 1, :]))
+        self.assertTrue(torch.equal(rotated[:, :, 0, :], rotated[:, :, 2, :]))
+
+    def test_rotary_position_embedding_reuses_trig_cache(self) -> None:
+        # ---------------------------------------------------------
+        # Build cos and sin tables once for the longest requested
+        # position range and reuse them for shorter later calls.
+        # ---------------------------------------------------------
+        rotary_position_embedding = RotaryPositionEmbedding(head_dim=4)
+        long_x = torch.ones((1, 2, 5, 4), dtype=torch.float32)
+        short_x = torch.ones((1, 2, 3, 4), dtype=torch.float32)
+        longer_x = torch.ones((1, 2, 6, 4), dtype=torch.float32)
+
+        rotary_position_embedding(long_x)
+        first_cos_pointer = rotary_position_embedding.cos_cache.data_ptr()
+        rotary_position_embedding(short_x)
+        second_cos_pointer = rotary_position_embedding.cos_cache.data_ptr()
+        rotary_position_embedding(longer_x)
+        third_cos_pointer = rotary_position_embedding.cos_cache.data_ptr()
+
+        self.assertEqual(first_cos_pointer, second_cos_pointer)
+        self.assertNotEqual(second_cos_pointer, third_cos_pointer)
+        self.assertNotIn("cos_cache", rotary_position_embedding.state_dict())
+        self.assertNotIn("sin_cache", rotary_position_embedding.state_dict())
+
+    def test_attention_cache_appends_rotated_keys(self) -> None:
+        # ---------------------------------------------------------
+        # Store RoPE-applied keys in the cache and append only the
+        # newly generated token states on the next inference step.
+        # ---------------------------------------------------------
+        attention = Attention(d_model=8, num_heads=2)
+        first_input = torch.randn((1, 2, 8), dtype=torch.float32)
+        _, first_cache = attention.forward_with_cache(
+            first_input,
+            first_input,
+            first_input,
+            past_key_value=None,
+        )
+        next_input = torch.randn((1, 1, 8), dtype=torch.float32)
+        _, next_cache = attention.forward_with_cache(
+            next_input,
+            next_input,
+            next_input,
+            past_key_value=first_cache,
+            position_offset=2,
+        )
+
+        self.assertEqual(first_cache[0].size(dim=2), 2)
+        self.assertEqual(next_cache[0].size(dim=2), 3)
+
+    def test_attention_rejects_odd_head_dim_for_rope(self) -> None:
+        # ---------------------------------------------------------
+        # Require pairwise head features because RoPE rotates even
+        # and odd channels together.
+        # ---------------------------------------------------------
+        with self.assertRaises(ValueError):
+            Attention(d_model=6, num_heads=2)
+
     def test_parse_args_uses_160m_model_defaults(self) -> None:
         # ---------------------------------------------------------
         # Keep the default pretraining run near the 160M class while
@@ -133,7 +217,6 @@ class PretrainingTrainTest(unittest.TestCase):
         model = DecoderOnlyTransformer(
             num_tokens=16,
             d_model=8,
-            max_len=4,
             num_layers=1,
             num_heads=2,
             d_ff=16,

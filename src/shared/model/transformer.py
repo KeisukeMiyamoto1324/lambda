@@ -7,7 +7,6 @@ from torch.optim.lr_scheduler import LambdaLR
 import lightning as L
 
 from src.shared.model.kv_cache import KeyValueCache, LayerKeyValueCache
-from src.shared.model.position_encoding import PositionEncoding
 from src.shared.model.self_attention import Attention
 
 
@@ -51,6 +50,7 @@ class DecoderBlock(nn.Module):
         self,
         x: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
         # Apply pre-norm self-attention so multiple decoder blocks can
@@ -63,6 +63,7 @@ class DecoderBlock(nn.Module):
             attention_input,
             is_causal=attention_mask is None,
             attention_mask=attention_mask,
+            position_ids=position_ids,
         )
         attention_residual = x + attention_output
 
@@ -78,6 +79,7 @@ class DecoderBlock(nn.Module):
         self,
         x: torch.Tensor,
         past_key_value: LayerKeyValueCache | None,
+        position_offset: int,
     ) -> tuple[torch.Tensor, LayerKeyValueCache]:
         # ---------------------------------------------------------
         # Apply self-attention with a layer-local cache, then keep the
@@ -90,6 +92,7 @@ class DecoderBlock(nn.Module):
             attention_input,
             past_key_value,
             is_causal=past_key_value is None,
+            position_offset=position_offset,
         )
         attention_residual = x + attention_output
 
@@ -107,7 +110,6 @@ class DecoderOnlyTransformer(L.LightningModule):
         self,
         num_tokens: int = 4,
         d_model: int = 2,
-        max_len: int = 6,
         num_layers: int = 2,
         num_heads: int = 1,
         d_ff: int = 8,
@@ -122,11 +124,10 @@ class DecoderOnlyTransformer(L.LightningModule):
         super().__init__()
 
         # ---------------------------------------------------------
-        # Embed tokens and positions before passing them through a
-        # stack of decoder blocks.
+        # Embed tokens before passing them through a stack of decoder
+        # blocks that apply rotary positions inside attention.
         # ---------------------------------------------------------
         self.we = nn.Embedding(num_embeddings=num_tokens, embedding_dim=d_model)
-        self.pe = PositionEncoding(d_model=d_model, max_len=max_len)
         self.blocks = nn.ModuleList(
             [DecoderBlock(d_model=d_model, num_heads=num_heads, d_ff=d_ff) for _ in range(num_layers)]
         )
@@ -170,11 +171,10 @@ class DecoderOnlyTransformer(L.LightningModule):
         attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Convert token ids into hidden states and apply positional
-        # information before the decoder stack.
+        # Convert token ids into hidden states before the decoder
+        # stack applies attention-local rotary positions.
         # ---------------------------------------------------------
-        word_embeddings = self.we(token_ids)
-        hidden_states = self.pe(word_embeddings, position_ids=position_ids)
+        hidden_states = self.we(token_ids)
 
         # ---------------------------------------------------------
         # Reuse the same decoder block interface for every layer to
@@ -184,6 +184,7 @@ class DecoderOnlyTransformer(L.LightningModule):
             hidden_states = block(
                 hidden_states,
                 attention_mask=attention_mask,
+                position_ids=position_ids,
             )
 
         # ---------------------------------------------------------
@@ -214,8 +215,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         if past_key_values is not None:
             position_offset = past_key_values[0][0].size(dim=2)
 
-        word_embeddings = self.we(token_ids)
-        hidden_states = self.pe(word_embeddings, position_offset=position_offset)
+        hidden_states = self.we(token_ids)
         next_key_values: KeyValueCache = []
 
         # ---------------------------------------------------------
@@ -227,6 +227,7 @@ class DecoderOnlyTransformer(L.LightningModule):
             hidden_states, key_value_cache = block.forward_with_cache(
                 hidden_states,
                 past_key_value,
+                position_offset=position_offset,
             )
             next_key_values.append(key_value_cache)
 

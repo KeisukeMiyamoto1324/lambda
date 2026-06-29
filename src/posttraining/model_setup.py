@@ -39,6 +39,7 @@ def build_tokenizer(base_model_dir: Path, output_path: Path) -> ByteLevelBPE:
 
 def build_model_config(
     model: DecoderOnlyTransformer,
+    max_len: int,
     learning_rate: float,
     pad_token_id: int,
     bos_token_id: int,
@@ -50,7 +51,7 @@ def build_model_config(
     # ---------------------------------------------------------
     first_block = model.blocks[0]
     return {
-        "max_len": model.pe.pe.size(dim=0),
+        "max_len": max_len,
         "d_model": model.we.embedding_dim,
         "num_layers": len(model.blocks),
         "num_heads": first_block.attention.num_heads,
@@ -66,14 +67,13 @@ def load_base_model(
     base_model_dir: Path,
     tokenizer: ByteLevelBPE,
     learning_rate: float,
-    max_len: int,
     accelerator: str,
 ) -> tuple[DecoderOnlyTransformer, dict[str, int | float]]:
     # ---------------------------------------------------------
     # Load PyTorch model artifacts directly and prepare every layer
     # for fine tuning without a model wrapper.
     # ---------------------------------------------------------
-    model, _ = load_pytorch_model(
+    model, base_model_config = load_pytorch_model(
         model_dir=base_model_dir,
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=learning_rate,
@@ -90,6 +90,7 @@ def load_base_model(
     # ---------------------------------------------------------
     model_config = build_model_config(
         model=model,
+        max_len=int(base_model_config["max_len"]),
         learning_rate=learning_rate,
         pad_token_id=tokenizer.token_to_id(tokenizer.pad_token),
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),

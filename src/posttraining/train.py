@@ -79,7 +79,6 @@ def main() -> None:
         base_model_dir=base_model_dir,
         tokenizer=tokenizer,
         learning_rate=args.learning_rate,
-        max_len=args.max_len,
         accelerator=accelerator,
     )
     train_dataloader, validation_dataloader, max_steps = build_dataloaders(

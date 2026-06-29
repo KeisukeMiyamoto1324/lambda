@@ -258,15 +258,14 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Rebuild the pretrained architecture with optional context
-    # length override and a fixed mid-training learning rate.
+    # Rebuild the pretrained architecture and apply a fixed
+    # mid-training learning rate.
     # ---------------------------------------------------------
     model, _ = load_pytorch_model(
         model_dir=source_model_dir,
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=args.learning_rate,
         use_fused_optimizer=accelerator == "cuda",
-        max_len=max_len,
     )
     model.loss_chunk_size = args.loss_chunk_size
 

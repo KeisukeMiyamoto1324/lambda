@@ -109,7 +109,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         model = DecoderOnlyTransformer(
             num_tokens=12,
             d_model=8,
-            max_len=16,
             num_layers=4,
             num_heads=2,
             d_ff=16,
@@ -137,7 +136,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             model = DecoderOnlyTransformer(
                 num_tokens=12,
                 d_model=8,
-                max_len=16,
                 num_layers=4,
                 num_heads=2,
                 d_ff=16,
@@ -166,7 +164,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     base_model_dir=model_dir,
                     tokenizer=FakeTokenizer(),
                     learning_rate=5e-5,
-                    max_len=8,
                     accelerator="cpu",
                 )
 
@@ -184,7 +181,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             model = DecoderOnlyTransformer(
                 num_tokens=12,
                 d_model=8,
-                max_len=16,
                 num_layers=4,
                 num_heads=2,
                 d_ff=16,
