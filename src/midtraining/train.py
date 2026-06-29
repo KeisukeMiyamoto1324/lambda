@@ -265,6 +265,7 @@ def main() -> None:
         model_dir=source_model_dir,
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=args.learning_rate,
+        max_len=max_len,
         use_fused_optimizer=accelerator == "cuda",
     )
     model.loss_chunk_size = args.loss_chunk_size

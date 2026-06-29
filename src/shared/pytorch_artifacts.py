@@ -39,6 +39,7 @@ def build_model_from_config(
     model_config: ModelConfig,
     vocab_size: int,
     learning_rate: float | None = None,
+    max_len: int | None = None,
     use_fused_optimizer: bool = False,
 ) -> DecoderOnlyTransformer:
     # ---------------------------------------------------------
@@ -48,7 +49,7 @@ def build_model_from_config(
     return DecoderOnlyTransformer(
         num_tokens=vocab_size,
         d_model=int(model_config["d_model"]),
-        max_len=int(model_config["max_len"]),
+        max_len=int(model_config["max_len"] if max_len is None else max_len),
         num_layers=int(model_config["num_layers"]),
         num_heads=int(model_config["num_heads"]),
         d_ff=int(model_config["d_ff"]),
@@ -62,6 +63,7 @@ def load_pytorch_model(
     model_dir: Path,
     vocab_size: int,
     learning_rate: float | None = None,
+    max_len: int | None = None,
     use_fused_optimizer: bool = False,
     map_location: str | torch.device = "cpu",
 ) -> tuple[DecoderOnlyTransformer, ModelConfig]:
@@ -74,6 +76,7 @@ def load_pytorch_model(
         model_config=model_config,
         vocab_size=vocab_size,
         learning_rate=learning_rate,
+        max_len=max_len,
         use_fused_optimizer=use_fused_optimizer,
     )
     model_state = torch.load(

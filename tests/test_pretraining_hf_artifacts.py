@@ -75,6 +75,40 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
         self.assertEqual(loaded_config["max_len"], 16)
         self.assertTrue(torch.equal(model.we.weight, loaded_model.we.weight))
 
+    def test_load_pytorch_model_can_extend_rope_context(self) -> None:
+        # ---------------------------------------------------------
+        # Rebuild non-persistent RoPE tables with the caller's longer
+        # context length while loading the same learned weights.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir)
+            model = DecoderOnlyTransformer(
+                num_tokens=12,
+                d_model=8,
+                max_len=4,
+                num_layers=2,
+                num_heads=2,
+                d_ff=16,
+                pad_token_id=0,
+            )
+            model_config = {**build_model_config(), "max_len": 4}
+            torch.save(model.state_dict(), output_path / "model.pth")
+            (output_path / "model_config.json").write_text(
+                json.dumps(model_config),
+                encoding="utf-8",
+            )
+
+            loaded_model, loaded_config = load_pytorch_model(
+                model_dir=output_path,
+                vocab_size=12,
+                max_len=8,
+            )
+            token_ids = torch.ones((1, 8), dtype=torch.long)
+            logits = loaded_model(token_ids)
+
+        self.assertEqual(loaded_config["max_len"], 4)
+        self.assertEqual(logits.shape, (1, 8, 12))
+
     def test_push_uses_hub_model_repo_and_only_allows_artifacts(self) -> None:
         # ---------------------------------------------------------
         # Mock the Hub client so publishing behavior is verified
