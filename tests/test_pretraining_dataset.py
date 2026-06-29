@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from collections.abc import Iterator
-from itertools import islice
 from pathlib import Path
 import random
 import tempfile
@@ -12,7 +11,6 @@ from torch.utils.data import IterableDataset
 
 from src.pretraining.dataset import build_tokenized_cache
 from src.pretraining.dataset import LocalTokenizedDataset
-from src.shared.packed_dataset import collate_packed_examples
 from src.pretraining.dataset import PretrainingCorpusDataset
 from src.pretraining.training_corpus_cases import PretrainingCorpusCase
 from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASE
@@ -28,7 +26,7 @@ class FixedTokenDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor, torch.
             input_ids = torch.tensor([value, value + 1], dtype=torch.long)
             label_ids = torch.tensor([value + 1, 0], dtype=torch.long)
             position_ids = torch.tensor([0, 1], dtype=torch.long)
-            segment_ids = torch.tensor([0, 0], dtype=torch.long)
+            segment_ids = torch.tensor([0, -1], dtype=torch.long)
             yield input_ids, label_ids, position_ids, segment_ids
 
 
@@ -281,7 +279,7 @@ class PretrainingDatasetTest(unittest.TestCase):
     def test_pretraining_corpus_bucket_packs_remaining_segments(self) -> None:
         # ---------------------------------------------------------
         # Flush all buffered segments at stream end so short leftover
-        # documents are still emitted as compact packed samples.
+        # documents are still emitted as padded packed samples.
         # ---------------------------------------------------------
         corpus_case = build_case(name="custom")
         dataset = PretrainingCorpusDataset(
@@ -309,33 +307,6 @@ class PretrainingDatasetTest(unittest.TestCase):
         self.assertEqual(position_ids.tolist(), [0, 1, 0, 0, 0, 0])
         self.assertEqual(segment_ids.tolist(), [0, 0, -1, -1, -1, -1])
 
-    def test_collate_packed_examples_stacks_fixed_batches(self) -> None:
-        # ---------------------------------------------------------
-        # Stack fixed packed samples into a bounded batch layout
-        # while preserving segment ids for masked PyTorch SDPA.
-        # ---------------------------------------------------------
-        examples = [
-            (
-                torch.tensor([1, 10, 1, 20], dtype=torch.long),
-                torch.tensor([10, 2, 20, 2], dtype=torch.long),
-                torch.tensor([0, 1, 0, 1], dtype=torch.long),
-                torch.tensor([0, 0, 1, 1], dtype=torch.long),
-            ),
-            (
-                torch.tensor([1, 30, 31, 0], dtype=torch.long),
-                torch.tensor([30, 31, 2, 0], dtype=torch.long),
-                torch.tensor([0, 1, 2, 0], dtype=torch.long),
-                torch.tensor([0, 0, 0, -1], dtype=torch.long),
-            ),
-        ]
-
-        input_ids, label_ids, position_ids, segment_ids = collate_packed_examples(examples)
-
-        self.assertEqual(input_ids.tolist(), [[1, 10, 1, 20], [1, 30, 31, 0]])
-        self.assertEqual(label_ids.tolist(), [[10, 2, 20, 2], [30, 31, 2, 0]])
-        self.assertEqual(position_ids.tolist(), [[0, 1, 0, 1], [0, 1, 2, 0]])
-        self.assertEqual(segment_ids.tolist(), [[0, 0, 1, 1], [0, 0, 0, -1]])
-
     def test_pretraining_corpus_splits_oversized_documents(self) -> None:
         # ---------------------------------------------------------
         # Split a single long document into max_len-sized segments
@@ -361,10 +332,10 @@ class PretrainingDatasetTest(unittest.TestCase):
             ],
         )
 
-    def test_packed_corpus_repeats_with_new_shuffle_order(self) -> None:
+    def test_packed_corpus_changes_shuffle_order_by_epoch(self) -> None:
         # ---------------------------------------------------------
         # Use a reproducible but distinct shuffle seed for every
-        # repeated corpus pass inside persistent workers.
+        # corpus pass in multi-epoch mid-training.
         # ---------------------------------------------------------
         dataset = PretrainingCorpusDataset(
             corpus_case=build_case(name="custom"),
@@ -375,42 +346,21 @@ class PretrainingDatasetTest(unittest.TestCase):
             eos_token_id=2,
             shuffle_buffer_size=10000,
             shuffle_seed=17,
-            repeat=True,
         )
         fake_dataset = FakeStreamingDataset(
             samples=[{"text": str(value)} for value in range(10, 20)]
         )
 
         with patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset):
-            repeated_examples = list(islice(dataset, 20))
+            first_epoch = [example[0][1].item() for example in dataset]
+            dataset.set_epoch(epoch_index=1)
+            second_epoch = [example[0][1].item() for example in dataset]
+            dataset.set_epoch(epoch_index=0)
+            repeated_first_epoch = [example[0][1].item() for example in dataset]
 
-        first_pass = [example[0][1].item() for example in repeated_examples[:10]]
-        second_pass = [example[0][1].item() for example in repeated_examples[10:]]
-        self.assertNotEqual(first_pass, second_pass)
-        self.assertEqual(sorted(first_pass), list(range(10, 20)))
-        self.assertEqual(sorted(second_pass), list(range(10, 20)))
-
-    def test_packed_corpus_repeat_stops_empty_worker_shard(self) -> None:
-        # ---------------------------------------------------------
-        # End an empty repeated worker shard instead of spinning
-        # forever without yielding examples.
-        # ---------------------------------------------------------
-        dataset = PretrainingCorpusDataset(
-            corpus_case=build_case(name="custom"),
-            tokenizer=FixedTokenizer(),
-            max_len=2,
-            pad_token_id=0,
-            bos_token_id=1,
-            eos_token_id=2,
-            repeat=True,
-        )
-        fake_dataset = FakeStreamingDataset(samples=[{"text": "10"}])
-        worker_info = type("WorkerInfo", (), {"num_workers": 2, "id": 1})()
-
-        with patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset):
-            with patch("src.shared.packed_dataset.get_worker_info", return_value=worker_info):
-                with self.assertRaises(StopIteration):
-                    next(iter(dataset))
+        self.assertNotEqual(first_epoch, second_epoch)
+        self.assertEqual(first_epoch, repeated_first_epoch)
+        self.assertEqual(sorted(first_epoch), list(range(10, 20)))
 
     def test_build_tokenized_cache_keeps_metadata(self) -> None:
         # ---------------------------------------------------------
@@ -432,7 +382,7 @@ class PretrainingDatasetTest(unittest.TestCase):
         self.assertEqual(payload["metadata"]["max_len"], 2)
         self.assertEqual(payload["metadata"]["corpus_signature"], "abc123")
         self.assertTrue(torch.equal(payload["position_ids"][0], torch.tensor([0, 1])))
-        self.assertTrue(torch.equal(payload["segment_ids"][0], torch.tensor([0, 0])))
+        self.assertTrue(torch.equal(payload["segment_ids"][0], torch.tensor([0, -1])))
 
     def test_local_tokenized_dataset_rejects_metadata_mismatch(self) -> None:
         # ---------------------------------------------------------
@@ -455,23 +405,6 @@ class PretrainingDatasetTest(unittest.TestCase):
                     max_len=2,
                     num_samples=2,
                     metadata={"corpus_signature": "def456"},
-                )
-
-    def test_build_tokenized_cache_rejects_short_finite_dataset(self) -> None:
-        # ---------------------------------------------------------
-        # Keep validation cache sources finite so a too-small
-        # validation split fails instead of repeating samples.
-        # ---------------------------------------------------------
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "validation.pt"
-
-            with self.assertRaises(ValueError):
-                build_tokenized_cache(
-                    dataset=FixedTokenDataset(),
-                    path=path,
-                    num_samples=3,
-                    max_len=2,
-                    metadata={"corpus_signature": "abc123"},
                 )
 
 

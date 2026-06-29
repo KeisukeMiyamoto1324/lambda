@@ -39,26 +39,22 @@ def build_tokenizer(base_model_dir: Path, output_path: Path) -> ByteLevelBPE:
 
 def build_model_config(
     model: DecoderOnlyTransformer,
-    max_len: int,
     learning_rate: float,
     pad_token_id: int,
     bos_token_id: int,
     eos_token_id: int,
-) -> dict[str, int | float | str]:
+) -> dict[str, int | float]:
     # ---------------------------------------------------------
     # Build the compact config used by legacy and Hugging Face
     # artifact writers after posttraining completes.
     # ---------------------------------------------------------
     first_block = model.blocks[0]
     return {
-        "max_len": max_len,
+        "max_len": model.pe.pe.size(dim=0),
         "d_model": model.we.embedding_dim,
         "num_layers": len(model.blocks),
         "num_heads": first_block.attention.num_heads,
-        "d_ff": first_block.feed_forward.up_projection.out_features,
-        "ffn_type": "swiglu",
-        "attention_backend": "pytorch_sdpa_masked",
-        "requires_cuda": False,
+        "d_ff": first_block.feed_forward.linear_1.out_features,
         "learning_rate": learning_rate,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
@@ -72,12 +68,12 @@ def load_base_model(
     learning_rate: float,
     max_len: int,
     accelerator: str,
-) -> tuple[DecoderOnlyTransformer, dict[str, int | float | str]]:
+) -> tuple[DecoderOnlyTransformer, dict[str, int | float]]:
     # ---------------------------------------------------------
     # Load PyTorch model artifacts directly and prepare every layer
     # for fine tuning without a model wrapper.
     # ---------------------------------------------------------
-    model, source_model_config = load_pytorch_model(
+    model, _ = load_pytorch_model(
         model_dir=base_model_dir,
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=learning_rate,
@@ -94,7 +90,6 @@ def load_base_model(
     # ---------------------------------------------------------
     model_config = build_model_config(
         model=model,
-        max_len=int(source_model_config["max_len"]),
         learning_rate=learning_rate,
         pad_token_id=tokenizer.token_to_id(tokenizer.pad_token),
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),

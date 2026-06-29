@@ -15,9 +15,6 @@ from src.shared.console import progress_manager
 
 PackedTrainingExample = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 PackedTrainingSegment = tuple[list[int], list[int], int]
-PACKING_VERSION = "bucket-packing-sdpa-mask-v1"
-SHUFFLE_BUFFER_SIZE = 10000
-SHUFFLE_SEED = 17
 BUCKET_PACKING_BUFFER_SEGMENTS = 4096
 BUCKET_PACKING_SEED = 17
 
@@ -35,7 +32,6 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         split_indexes: tuple[int, ...] = (0,),
         shuffle_buffer_size: int = 0,
         shuffle_seed: int = 0,
-        repeat: bool = False,
     ) -> None:
         super().__init__()
 
@@ -53,31 +49,16 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         self.split_indexes = split_indexes
         self.shuffle_buffer_size = shuffle_buffer_size
         self.shuffle_seed = shuffle_seed
-        self.repeat = repeat
+        self.epoch_index = 0
+
+    def set_epoch(self, epoch_index: int) -> None:
+        # ---------------------------------------------------------
+        # Change only the shuffle seed between epochs so repeated
+        # corpus passes remain deterministic and reproducible.
+        # ---------------------------------------------------------
+        self.epoch_index = epoch_index
 
     def __iter__(self) -> Iterator[PackedTrainingExample]:
-        # ---------------------------------------------------------
-        # Training can repeat the finite corpus inside each worker
-        # while validation keeps one finite pass for cache checks.
-        # ---------------------------------------------------------
-        repeat_index = 0
-
-        while True:
-            yielded = False
-
-            for example in self._iter_corpus_pass(repeat_index=repeat_index):
-                yielded = True
-                yield example
-
-            if not self.repeat or not yielded:
-                return
-
-            repeat_index += 1
-
-    def _iter_corpus_pass(
-        self,
-        repeat_index: int,
-    ) -> Iterator[PackedTrainingExample]:
         # ---------------------------------------------------------
         # Open the configured corpus split as a streaming source so
         # samples are never materialized in local memory.
@@ -105,7 +86,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         # ---------------------------------------------------------
         if self.shuffle_buffer_size > 0:
             dataset = dataset.shuffle(
-                seed=self.shuffle_seed + repeat_index,
+                seed=self.shuffle_seed + self.epoch_index,
                 buffer_size=self.shuffle_buffer_size,
             )
 
@@ -303,8 +284,8 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         segment_ids: list[int],
     ) -> PackedTrainingExample:
         # ---------------------------------------------------------
-        # Pad packed streams to fixed length so PyTorch SDPA can use
-        # one bounded segment mask per batch.
+        # Pad all packed streams so every sample matches the fixed
+        # context length expected by the model and DataLoader.
         # ---------------------------------------------------------
         padding_size = self.max_len - len(input_token_ids)
         padded_input_ids = input_token_ids + [self.pad_token_id for _ in range(padding_size)]
@@ -359,7 +340,7 @@ class LocalTokenizedDataset(Dataset[PackedTrainingExample]):
     def __len__(self) -> int:
         # ---------------------------------------------------------
         # Return the number of fixed validation examples available
-        # from the cached sample list.
+        # from the cached tensor file.
         # ---------------------------------------------------------
         return self.inputs.size(dim=0)
 
@@ -374,20 +355,6 @@ class LocalTokenizedDataset(Dataset[PackedTrainingExample]):
             self.position_ids[index],
             self.segment_ids[index],
         )
-
-
-def collate_packed_examples(
-    examples: list[PackedTrainingExample],
-) -> PackedTrainingExample:
-    # ---------------------------------------------------------
-    # Stack fixed-length packed samples so each batch keeps a
-    # bounded [batch, max_len] layout for PyTorch SDPA.
-    # ---------------------------------------------------------
-    input_ids = torch.stack([example[0] for example in examples])
-    label_ids = torch.stack([example[1] for example in examples])
-    position_ids = torch.stack([example[2] for example in examples])
-    segment_ids = torch.stack([example[3] for example in examples])
-    return input_ids, label_ids, position_ids, segment_ids
 
 
 def build_tokenized_cache(

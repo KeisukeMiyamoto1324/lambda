@@ -13,7 +13,7 @@ from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.model.transformer import DecoderOnlyTransformer
 
 
-def build_model_config() -> dict[str, int | float | str]:
+def build_model_config() -> dict[str, int | float]:
     # ---------------------------------------------------------
     # Build a compact model config shared by PyTorch artifact tests
     # so direct model loading stays fast.
@@ -24,7 +24,6 @@ def build_model_config() -> dict[str, int | float | str]:
         "num_layers": 2,
         "num_heads": 2,
         "d_ff": 16,
-        "ffn_type": "swiglu",
         "learning_rate": 0.1,
         "pad_token_id": 0,
         "bos_token_id": 1,
@@ -77,10 +76,10 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
         self.assertEqual(loaded_config["max_len"], 16)
         self.assertTrue(torch.equal(model.we.weight, loaded_model.we.weight))
 
-    def test_load_pytorch_model_applies_requested_max_len_metadata(self) -> None:
+    def test_load_pytorch_model_rebuilds_position_buffer_for_new_max_len(self) -> None:
         # ---------------------------------------------------------
-        # Keep learned weights while applying the requested context
-        # length metadata used by RoPE training and datasets.
+        # Keep learned weights while replacing only the deterministic
+        # sinusoidal position buffer for a new context length.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir)
@@ -105,42 +104,8 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
                 max_len=32,
             )
 
-        self.assertEqual(loaded_model.max_len, 32)
+        self.assertEqual(loaded_model.pe.pe.size(dim=0), 32)
         self.assertTrue(torch.equal(model.we.weight, loaded_model.we.weight))
-
-    def test_load_pytorch_model_applies_requested_lr_schedule(self) -> None:
-        # ---------------------------------------------------------
-        # Keep scheduler values caller-controlled so mid-training can
-        # add warmup cosine decay without changing saved architecture.
-        # ---------------------------------------------------------
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir)
-            model = DecoderOnlyTransformer(
-                num_tokens=12,
-                d_model=8,
-                max_len=16,
-                num_layers=2,
-                num_heads=2,
-                d_ff=16,
-                pad_token_id=0,
-            )
-            torch.save(model.state_dict(), output_path / "model.pth")
-            (output_path / "model_config.json").write_text(
-                json.dumps(build_model_config()),
-                encoding="utf-8",
-            )
-
-            loaded_model, _ = load_pytorch_model(
-                model_dir=output_path,
-                vocab_size=12,
-                lr_warmup_steps=2,
-                lr_total_steps=10,
-                min_learning_rate=0.01,
-            )
-
-        self.assertEqual(loaded_model.lr_warmup_steps, 2)
-        self.assertEqual(loaded_model.lr_total_steps, 10)
-        self.assertEqual(loaded_model.min_learning_rate, 0.01)
 
     def test_push_uses_hub_model_repo_and_only_allows_artifacts(self) -> None:
         # ---------------------------------------------------------

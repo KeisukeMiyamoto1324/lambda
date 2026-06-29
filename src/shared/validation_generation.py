@@ -106,9 +106,9 @@ class ValidationGenerationCallback(Callback):
         # Use the first packed document and stop halfway through
         # short segments so the model always predicts unseen text.
         # ---------------------------------------------------------
-        first_document_ids = input_ids[segment_ids.eq(0)].tolist()
-        prompt_size = min(self.prompt_tokens, max(1, len(first_document_ids) // 2))
-        return [int(token_id) for token_id in first_document_ids[:prompt_size]]
+        first_segment_ids = input_ids[segment_ids.eq(0)].tolist()
+        prompt_size = min(self.prompt_tokens, max(1, len(first_segment_ids) // 2))
+        return [int(token_id) for token_id in first_segment_ids[:prompt_size]]
 
     def _generate_ids(
         self,

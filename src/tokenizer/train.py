@@ -11,7 +11,6 @@ load_dotenv()
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from src.shared.tokenizer import ByteLevelBPE
-from src.shared.cli import require
 from src.tokenizer.training_corpus_cases import TRAINING_CORPUS_CASES
 from src.tokenizer.training_corpus_data import stream_training_texts
 
@@ -28,11 +27,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="models/tokenizer",
     )
-    args = parser.parse_args()
-
-    require(args.vocab_size > 0, parser, "--vocab-size must be greater than 0")
-
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:

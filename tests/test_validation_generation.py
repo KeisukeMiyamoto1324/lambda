@@ -17,13 +17,13 @@ class ValidationDataset:
                 torch.tensor([1, 10, 11, 12, 13, 2, 20, 21]),
                 torch.tensor([10, 11, 12, 13, 2, 0, 21, 2]),
                 torch.tensor([0, 1, 2, 3, 4, 5, 0, 1]),
-                torch.tensor([0, 0, 0, 0, 0, 0, 1, 1], dtype=torch.long),
+                torch.tensor([0, 0, 0, 0, 0, 0, 1, 1]),
             ),
             (
-                torch.tensor([1, 30, 31, 2]),
-                torch.tensor([30, 31, 2, 0]),
-                torch.tensor([0, 1, 2, 3]),
-                torch.tensor([0, 0, 0, 0], dtype=torch.long),
+                torch.tensor([1, 30, 31, 2, 0, 0, 0, 0]),
+                torch.tensor([30, 31, 2, 0, 0, 0, 0, 0]),
+                torch.tensor([0, 1, 2, 3, 0, 0, 0, 0]),
+                torch.tensor([0, 0, 0, 0, -1, -1, -1, -1]),
             ),
         ]
 

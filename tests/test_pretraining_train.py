@@ -7,9 +7,8 @@ from unittest.mock import patch
 import torch
 
 from src.pretraining.train import parse_args
-from src.shared.model.transformer import build_packed_attention_mask
 from src.shared.model.transformer import DecoderOnlyTransformer
-from src.shared.model.transformer import normalize_training_batch
+from src.shared.model.transformer import build_packed_attention_mask
 from src.shared.model.transformer import resolve_warmup_cosine_learning_rate
 
 
@@ -27,7 +26,7 @@ class PretrainingTrainTest(unittest.TestCase):
         self.assertEqual(args.num_layers, 16)
         self.assertEqual(args.num_heads, 12)
         self.assertEqual(args.d_ff, 3072)
-        self.assertEqual(args.batch_size, 24)
+        self.assertEqual(args.batch_size, 96)
         self.assertEqual(args.devices, "auto")
         self.assertEqual(args.output_path, "models/lambda-160m")
 
@@ -107,24 +106,29 @@ class PretrainingTrainTest(unittest.TestCase):
             min_learning_rate,
         )
 
-    def test_normalize_training_batch_keeps_regular_batch(self) -> None:
+    def test_build_packed_attention_mask_blocks_other_segments(self) -> None:
         # ---------------------------------------------------------
-        # Keep regular fixed-length batches in batch-major layout so
-        # posttraining uses the simple causal PyTorch SDPA path.
+        # Keep packed attention causal inside each segment and block
+        # tokens from other packed documents.
         # ---------------------------------------------------------
-        input_tokens = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long)
-        labels = torch.tensor([[2, 3, 0], [5, 6, 0]], dtype=torch.long)
-        normalized = normalize_training_batch(batch=(input_tokens, labels))
+        segment_ids = torch.tensor([[0, 0, 1, -1]], dtype=torch.long)
+        attention_mask = build_packed_attention_mask(segment_ids=segment_ids)
 
-        self.assertEqual(normalized[0].tolist(), [[1, 2, 3], [4, 5, 6]])
-        self.assertEqual(normalized[1].tolist(), [[2, 3, 0], [5, 6, 0]])
-        self.assertIsNone(normalized[2])
-        self.assertIsNone(normalized[3])
+        self.assertEqual(attention_mask.shape, (1, 1, 4, 4))
+        self.assertEqual(
+            attention_mask[0, 0].tolist(),
+            [
+                [True, False, False, False],
+                [True, True, False, False],
+                [False, False, True, False],
+                [True, True, True, False],
+            ],
+        )
 
     def test_transformer_computes_loss_for_packed_batch(self) -> None:
         # ---------------------------------------------------------
-        # Run one packed batch through the PyTorch SDPA path using
-        # explicit position ids and segment ids.
+        # Run one packed batch through the model using explicit
+        # position ids and segment ids.
         # ---------------------------------------------------------
         model = DecoderOnlyTransformer(
             num_tokens=16,
@@ -147,146 +151,6 @@ class PretrainingTrainTest(unittest.TestCase):
         )
 
         self.assertTrue(torch.isfinite(loss))
-
-    def test_packed_sdpa_keeps_documents_isolated(self) -> None:
-        # ---------------------------------------------------------
-        # Match a ragged packed batch against the same tokens
-        # represented as padded independent rows.
-        # ---------------------------------------------------------
-        torch.manual_seed(3)
-        model = DecoderOnlyTransformer(
-            num_tokens=16,
-            d_model=8,
-            max_len=4,
-            num_layers=1,
-            num_heads=2,
-            d_ff=16,
-            pad_token_id=0,
-        )
-        packed_tokens = torch.tensor([[1, 3, 4, 2, 0, 0]], dtype=torch.long)
-        row_tokens = torch.tensor([[1, 3, 4], [2, 0, 0]], dtype=torch.long)
-        position_ids = torch.tensor([[0, 1, 2, 0, 0, 0]], dtype=torch.long)
-        segment_ids = torch.tensor([[0, 0, 0, 1, -1, -1]], dtype=torch.long)
-
-        with torch.no_grad():
-            packed_hidden = model.forward_hidden(
-                token_ids=packed_tokens,
-                position_ids=position_ids,
-                attention_mask=None,
-            )
-            masked_hidden = model.forward_hidden(
-                token_ids=packed_tokens,
-                position_ids=position_ids,
-                attention_mask=build_packed_attention_mask(segment_ids),
-            )
-            row_hidden = model.forward_hidden(token_ids=row_tokens)
-
-        self.assertFalse(torch.allclose(packed_hidden[:, 3], masked_hidden[:, 3]))
-        torch.testing.assert_close(masked_hidden[:, :3], row_hidden[:1], atol=1e-6, rtol=1e-6)
-        torch.testing.assert_close(masked_hidden[:, 3], row_hidden[1, 0].unsqueeze(0), atol=1e-6, rtol=1e-6)
-
-    def test_transformer_rejects_odd_rotary_head_dim(self) -> None:
-        # ---------------------------------------------------------
-        # Reject head dimensions that cannot be split into rotary
-        # even/odd pairs for query and key rotation.
-        # ---------------------------------------------------------
-        with self.assertRaises(ValueError):
-            DecoderOnlyTransformer(
-                num_tokens=16,
-                d_model=6,
-                max_len=4,
-                num_layers=1,
-                num_heads=2,
-                d_ff=16,
-                pad_token_id=0,
-            )
-
-    def test_rotary_position_cache_matches_attention_layout(self) -> None:
-        # ---------------------------------------------------------
-        # Keep RoPE caches directly broadcastable to the shared
-        # batch, sequence, heads, and head-dimension layout.
-        # ---------------------------------------------------------
-        model = DecoderOnlyTransformer(
-            num_tokens=16,
-            d_model=8,
-            max_len=4,
-            num_layers=1,
-            num_heads=2,
-            d_ff=16,
-            pad_token_id=0,
-        )
-        position_ids = torch.tensor([[0, 1, 2], [0, 1, 2]], dtype=torch.long)
-        rotary_position_cache = model.build_rotary_position_cache(
-            position_ids=position_ids,
-            dtype=torch.float32,
-        )
-        attention = model.blocks[0].attention
-        hidden_states = torch.randn(2, 3, 2, 4)
-
-        rotated = attention._apply_rotary_position(
-            hidden_states,
-            rotary_position_cache=rotary_position_cache,
-        )
-
-        self.assertEqual(rotated.shape, hidden_states.shape)
-
-    def test_forward_with_cache_uses_sequence_major_cache(self) -> None:
-        # ---------------------------------------------------------
-        # Store cached keys and values in the same sequence-major
-        # layout used before PyTorch attention transposes them.
-        # ---------------------------------------------------------
-        model = DecoderOnlyTransformer(
-            num_tokens=16,
-            d_model=8,
-            max_len=4,
-            num_layers=1,
-            num_heads=2,
-            d_ff=16,
-            pad_token_id=0,
-        )
-        token_ids = torch.tensor([[1, 3], [4, 2]], dtype=torch.long)
-
-        logits, past_key_values = model.forward_with_cache(
-            token_ids=token_ids,
-            past_key_values=None,
-        )
-
-        self.assertEqual(logits.shape, (2, 2, 16))
-        self.assertEqual(past_key_values[0][0].shape, (2, 2, 2, 4))
-        self.assertEqual(past_key_values[0][1].shape, (2, 2, 2, 4))
-
-    def test_forward_with_cache_matches_full_forward(self) -> None:
-        # ---------------------------------------------------------
-        # Verify one-token cached inference uses the same RoPE
-        # positions as the full causal forward pass.
-        # ---------------------------------------------------------
-        torch.manual_seed(7)
-        model = DecoderOnlyTransformer(
-            num_tokens=16,
-            d_model=8,
-            max_len=4,
-            num_layers=1,
-            num_heads=2,
-            d_ff=16,
-            pad_token_id=0,
-        )
-        model.eval()
-        token_ids = torch.tensor([[1, 3, 4, 2]], dtype=torch.long)
-
-        with torch.no_grad():
-            full_logits = model(token_ids)
-            past_key_values = None
-            cached_logits = []
-
-            for token_index in range(token_ids.size(dim=1)):
-                logits, past_key_values = model.forward_with_cache(
-                    token_ids=token_ids[:, token_index : token_index + 1],
-                    past_key_values=past_key_values,
-                )
-                cached_logits.append(logits)
-
-        stacked_cached_logits = torch.cat(cached_logits, dim=1)
-        torch.testing.assert_close(stacked_cached_logits, full_logits, atol=1e-5, rtol=1e-5)
 
     def test_parse_args_accepts_resume_checkpoint_path(self) -> None:
         # ---------------------------------------------------------

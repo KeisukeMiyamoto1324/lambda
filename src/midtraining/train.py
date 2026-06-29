@@ -1,3 +1,4 @@
+import argparse
 from hashlib import blake2b
 import json
 import os
@@ -5,6 +6,7 @@ from pathlib import Path
 import sys
 
 import lightning as L
+from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
@@ -13,7 +15,6 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.midtraining.cli import parse_args
 from src.midtraining.training_corpus_cases import MIDTRAINING_CORPUS_CASE
 from src.midtraining.training_corpus_cases import serialize_midtraining_corpus_case
 from src.shared.device_utils import is_global_zero_process
@@ -24,17 +25,12 @@ from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.packed_dataset import build_tokenized_cache
-from src.shared.packed_dataset import collate_packed_examples
 from src.shared.packed_dataset import LocalTokenizedDataset
-from src.shared.packed_dataset import PACKING_VERSION
 from src.shared.packed_dataset import PackedCorpusDataset
-from src.shared.packed_dataset import SHUFFLE_BUFFER_SIZE
-from src.shared.packed_dataset import SHUFFLE_SEED
 from src.shared.pytorch_artifacts import load_model_config
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.tokenizer import ByteLevelBPE
-from src.shared.training_plan import show_training_token_plan
 from src.shared.training_progress import FullTrainingProgressBar
 from src.shared.validation_generation import ValidationGenerationCallback
 
@@ -42,6 +38,106 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+
+
+PACKING_VERSION = "bucket-packing-v1"
+SHUFFLE_BUFFER_SIZE = 10000
+SHUFFLE_SEED = 17
+
+
+class DatasetEpochCallback(Callback):
+    def __init__(self, dataset: PackedCorpusDataset) -> None:
+        super().__init__()
+        self.dataset = dataset
+
+    def on_train_epoch_start(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+    ) -> None:
+        # ---------------------------------------------------------
+        # Use the Lightning epoch index to select the deterministic
+        # shuffle order, including after checkpoint resume.
+        # ---------------------------------------------------------
+        del pl_module
+        self.dataset.set_epoch(epoch_index=trainer.current_epoch)
+
+
+def parse_args() -> argparse.Namespace:
+    # ---------------------------------------------------------
+    # Define the input model, training runtime, validation budget,
+    # output artifacts, and optional epoch-checkpoint resume.
+    # ---------------------------------------------------------
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--max-len", type=int, default=None)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--batch-size", type=int, default=72)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
+    parser.add_argument("--max-steps", type=int, default=10240)
+    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--val-split-modulo", type=int, default=100)
+    parser.add_argument("--val-split-index", type=int, default=0)
+    parser.add_argument("--val-batches", type=int, default=64)
+    parser.add_argument("--validation-cache-path", type=str, default="")
+    parser.add_argument("--val-check-interval", type=int, default=1000)
+    parser.add_argument("--checkpoint-every-n-steps", type=int, default=5000)
+    parser.add_argument("--metric-log-every-n-steps", type=int, default=500)
+    parser.add_argument("--loss-chunk-size", type=int, default=32)
+    parser.add_argument("--devices", type=str, default="auto")
+    parser.add_argument("--output-path", type=str, default="models/lambda-160m-midtrained")
+    parser.add_argument("--resume-from-checkpoint", type=str, default="")
+    parser.add_argument("--push-to-hub", action="store_true")
+    args = parser.parse_args()
+
+    # ---------------------------------------------------------
+    # Reject incomplete model directories and invalid runtime
+    # values before opening the remote streaming dataset.
+    # ---------------------------------------------------------
+    model_path = Path(args.model_path)
+    required_model_files = [
+        model_path / "model.pth",
+        model_path / "model_config.json",
+        model_path / "tokenizer.json",
+    ]
+
+    if not model_path.is_dir() or any(not path.is_file() for path in required_model_files):
+        parser.error("--model-path must contain model.pth, model_config.json, and tokenizer.json")
+
+    if args.max_len is not None and args.max_len <= 0:
+        parser.error("--max-len must be greater than 0")
+
+    if args.learning_rate <= 0.0:
+        parser.error("--learning-rate must be greater than 0")
+
+    if args.gradient_accumulation_steps < 1:
+        parser.error("--gradient-accumulation-steps must be greater than or equal to 1")
+
+    try:
+        resolve_devices(devices=args.devices)
+    except ValueError as error:
+        parser.error(str(error))
+
+    if args.max_steps <= 0:
+        parser.error("--max-steps must be greater than 0")
+
+    if args.checkpoint_every_n_steps <= 0:
+        parser.error("--checkpoint-every-n-steps must be greater than 0")
+
+    if args.val_split_modulo <= 1:
+        parser.error("--val-split-modulo must be greater than 1")
+
+    if args.val_split_index < 0 or args.val_split_index >= args.val_split_modulo:
+        parser.error("--val-split-index must be within --val-split-modulo")
+
+    if args.resume_from_checkpoint and not Path(args.resume_from_checkpoint).is_file():
+        parser.error("--resume-from-checkpoint must point to an existing checkpoint file")
+
+    if args.push_to_hub and not os.environ.get("HF_REPO"):
+        parser.error("HF_REPO is required in the environment when --push-to-hub is set")
+
+    return args
+
 
 def build_corpus_signature() -> str:
     # ---------------------------------------------------------
@@ -68,11 +164,9 @@ def main() -> None:
     device_count = resolve_device_count(accelerator=accelerator, devices=devices)
     strategy = resolve_strategy(accelerator=accelerator, device_count=device_count)
     precision = resolve_precision(accelerator=accelerator)
-
     pad_token_id = tokenizer.token_to_id(tokenizer.pad_token)
     bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
     eos_token_id = tokenizer.token_to_id(tokenizer.eos_token)
-    min_learning_rate = args.learning_rate * args.min_learning_rate_ratio
 
     # ---------------------------------------------------------
     # Prepare output, validation cache, and deterministic corpus
@@ -113,7 +207,6 @@ def main() -> None:
         split_indexes=train_split_indexes,
         shuffle_buffer_size=SHUFFLE_BUFFER_SIZE,
         shuffle_seed=SHUFFLE_SEED,
-        repeat=True,
     )
     validation_source_dataset = PackedCorpusDataset(
         corpus_case=MIDTRAINING_CORPUS_CASE,
@@ -154,8 +247,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=accelerator == "cuda",
-        persistent_workers=args.num_workers > 0,
-        collate_fn=collate_packed_examples,
+        persistent_workers=False,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -163,24 +255,11 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=accelerator == "cuda",
         persistent_workers=args.num_workers > 0,
-        collate_fn=collate_packed_examples,
     )
-
-    if is_global_zero_process():
-        estimated_train_tokens = show_training_token_plan(
-            stage_name="midtraining",
-            max_steps=args.max_steps,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            batch_size=args.batch_size,
-            device_count=device_count,
-            max_len=max_len,
-        )
-    else:
-        estimated_train_tokens = 0
 
     # ---------------------------------------------------------
     # Rebuild the pretrained architecture with optional context
-    # override and the same warmup cosine schedule as pretraining.
+    # length override and a fixed mid-training learning rate.
     # ---------------------------------------------------------
     model, _ = load_pytorch_model(
         model_dir=source_model_dir,
@@ -188,9 +267,6 @@ def main() -> None:
         learning_rate=args.learning_rate,
         use_fused_optimizer=accelerator == "cuda",
         max_len=max_len,
-        lr_warmup_steps=args.lr_warmup_steps,
-        lr_total_steps=args.max_steps,
-        min_learning_rate=min_learning_rate,
     )
     model.loss_chunk_size = args.loss_chunk_size
 
@@ -205,6 +281,7 @@ def main() -> None:
             tokenizer=tokenizer,
             output_dir=model_dir / "validation-generations",
         ),
+        DatasetEpochCallback(dataset=train_dataset),
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="step-{step}",
@@ -254,7 +331,7 @@ def main() -> None:
 
     # ---------------------------------------------------------
     # Save final weights with inherited architecture metadata and
-    # the exact scheduled LR, corpus, and step budget details.
+    # the exact fixed-LR, corpus, and step budget details.
     # ---------------------------------------------------------
     if not trainer.is_global_zero:
         return
@@ -271,13 +348,7 @@ def main() -> None:
         "global_batch_size": args.batch_size * device_count,
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "global_effective_batch_size": args.batch_size * args.gradient_accumulation_steps * device_count,
-        "ffn_type": "swiglu",
-        "attention_backend": "pytorch_sdpa_masked",
-        "requires_cuda": False,
-        "lr_schedule": "warmup_cosine",
-        "lr_warmup_steps": args.lr_warmup_steps,
-        "min_learning_rate": min_learning_rate,
-        "min_learning_rate_ratio": args.min_learning_rate_ratio,
+        "lr_schedule": "fixed",
         "loss_chunk_size": args.loss_chunk_size,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
@@ -293,15 +364,17 @@ def main() -> None:
         "packing_version": PACKING_VERSION,
         "shuffle_buffer_size": SHUFFLE_BUFFER_SIZE,
         "shuffle_seed": SHUFFLE_SEED,
-        "midtraining_estimated_train_tokens": estimated_train_tokens,
         "trained_steps": trainer.global_step,
     }
 
     # ---------------------------------------------------------
-    # Remove older epoch-based midtraining metadata because this
-    # stage is now managed by optimizer steps and token budget.
+    # Remove the inherited pretraining scheduler fields because
+    # mid-training uses one fixed learning rate for all epochs.
     # ---------------------------------------------------------
     obsolete_config_keys = [
+        "lr_warmup_steps",
+        "min_learning_rate",
+        "min_learning_rate_ratio",
         "midtraining_epochs",
         "midtraining_completed_epochs",
     ]
