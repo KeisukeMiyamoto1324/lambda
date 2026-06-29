@@ -33,6 +33,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         split_indexes: tuple[int, ...] = (0,),
         shuffle_buffer_size: int = 0,
         shuffle_seed: int = 0,
+        repeat_forever: bool = False,
     ) -> None:
         super().__init__()
 
@@ -50,16 +51,23 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         self.split_indexes = split_indexes
         self.shuffle_buffer_size = shuffle_buffer_size
         self.shuffle_seed = shuffle_seed
-        self.epoch_index = 0
-
-    def set_epoch(self, epoch_index: int) -> None:
-        # ---------------------------------------------------------
-        # Change only the shuffle seed between epochs so repeated
-        # corpus passes remain deterministic and reproducible.
-        # ---------------------------------------------------------
-        self.epoch_index = epoch_index
+        self.repeat_forever = repeat_forever
 
     def __iter__(self) -> Iterator[PackedTrainingExample]:
+        # ---------------------------------------------------------
+        # Repeat complete streaming corpus passes inside each worker
+        # so training can be bounded only by Lightning max_steps.
+        # ---------------------------------------------------------
+        pass_index = 0
+
+        while True:
+            yield from self._iter_corpus_pass(pass_index=pass_index)
+            pass_index += 1
+
+            if not self.repeat_forever:
+                break
+
+    def _iter_corpus_pass(self, pass_index: int) -> Iterator[PackedTrainingExample]:
         # ---------------------------------------------------------
         # Open the configured corpus split as a streaming source so
         # samples are never materialized in local memory.
@@ -82,12 +90,12 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         )
 
         # ---------------------------------------------------------
-        # Shuffle each training epoch with a distinct fixed seed,
-        # then shard the same order across ranks and workers.
+        # Shuffle each corpus pass with a distinct fixed seed, then
+        # shard the same order across ranks and workers.
         # ---------------------------------------------------------
         if self.shuffle_buffer_size > 0:
             dataset = dataset.shuffle(
-                seed=self.shuffle_seed + self.epoch_index,
+                seed=self.shuffle_seed + pass_index,
                 buffer_size=self.shuffle_buffer_size,
             )
 

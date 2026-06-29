@@ -38,6 +38,8 @@ load_dotenv()
 
 
 PACKING_VERSION = "bucket-packing-v1"
+SHUFFLE_BUFFER_SIZE = 10000
+SHUFFLE_SEED = 17
 
 
 def build_corpus_signature(
@@ -108,6 +110,9 @@ def main() -> None:
         eos_token_id=eos_token_id,
         split_modulo=args.val_split_modulo,
         split_indexes=train_split_indexes,
+        shuffle_buffer_size=SHUFFLE_BUFFER_SIZE,
+        shuffle_seed=SHUFFLE_SEED,
+        repeat_forever=True,
     )
     validation_source_dataset = PackedCorpusDataset(
         corpus_case=PRETRAINING_CORPUS_CASE,
@@ -310,6 +315,8 @@ def main() -> None:
         "validation_cache_path": str(validation_cache_path),
         "validation_sample_count": validation_sample_count,
         "packing_version": PACKING_VERSION,
+        "shuffle_buffer_size": SHUFFLE_BUFFER_SIZE,
+        "shuffle_seed": SHUFFLE_SEED,
         "trained_steps": trainer.global_step,
     }
 

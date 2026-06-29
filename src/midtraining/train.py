@@ -5,7 +5,6 @@ from pathlib import Path
 import sys
 
 import lightning as L
-from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
@@ -43,24 +42,6 @@ load_dotenv()
 PACKING_VERSION = "bucket-packing-v1"
 SHUFFLE_BUFFER_SIZE = 10000
 SHUFFLE_SEED = 17
-
-
-class DatasetEpochCallback(Callback):
-    def __init__(self, dataset: PackedCorpusDataset) -> None:
-        super().__init__()
-        self.dataset = dataset
-
-    def on_train_epoch_start(
-        self,
-        trainer: L.Trainer,
-        pl_module: L.LightningModule,
-    ) -> None:
-        # ---------------------------------------------------------
-        # Use the Lightning epoch index to select the deterministic
-        # shuffle order, including after checkpoint resume.
-        # ---------------------------------------------------------
-        del pl_module
-        self.dataset.set_epoch(epoch_index=trainer.current_epoch)
 
 
 def build_corpus_signature() -> str:
@@ -117,8 +98,8 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Stream finite corpus passes until the configured optimizer
-    # step budget is reached, changing shuffle order each pass.
+    # Stream repeated corpus passes inside persistent workers until
+    # Lightning reaches the configured optimizer step budget.
     # ---------------------------------------------------------
     train_dataset = PackedCorpusDataset(
         corpus_case=MIDTRAINING_CORPUS_CASE,
@@ -131,6 +112,7 @@ def main() -> None:
         split_indexes=train_split_indexes,
         shuffle_buffer_size=SHUFFLE_BUFFER_SIZE,
         shuffle_seed=SHUFFLE_SEED,
+        repeat_forever=True,
     )
     validation_source_dataset = PackedCorpusDataset(
         corpus_case=MIDTRAINING_CORPUS_CASE,
@@ -171,7 +153,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=accelerator == "cuda",
-        persistent_workers=False,
+        persistent_workers=args.num_workers > 0,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -205,7 +187,6 @@ def main() -> None:
             tokenizer=tokenizer,
             output_dir=model_dir / "validation-generations",
         ),
-        DatasetEpochCallback(dataset=train_dataset),
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="step-{step}",
