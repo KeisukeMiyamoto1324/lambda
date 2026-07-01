@@ -31,6 +31,7 @@ from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.tokenizer import ByteLevelBPE
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
+from src.shared.training_token_budget import show_training_token_budget
 from src.shared.training_progress import FullTrainingProgressBar
 from src.shared.validation_generation import ValidationGenerationCallback
 
@@ -184,6 +185,20 @@ def main() -> None:
         min_learning_rate=min_learning_rate,
     )
     model.loss_chunk_size = args.loss_chunk_size
+
+    # ---------------------------------------------------------
+    # Print the planned context-token budget and its ratio to the
+    # model size once before the training loop starts.
+    # ---------------------------------------------------------
+    if is_global_zero_process():
+        show_training_token_budget(
+            max_steps=args.max_steps,
+            batch_size=args.batch_size,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            device_count=device_count,
+            max_len=max_len,
+            parameter_count=sum(parameter.numel() for parameter in model.parameters()),
+        )
 
     # ---------------------------------------------------------
     # Save resumable checkpoints at fixed step intervals, the best

@@ -28,6 +28,7 @@ from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
+from src.shared.training_token_budget import show_training_token_budget
 from src.shared.training_progress import FullTrainingProgressBar
 from src.shared.validation_generation import ValidationGenerationCallback
 from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASE
@@ -194,6 +195,20 @@ def main() -> None:
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
     )
+
+    # ---------------------------------------------------------
+    # Print the planned context-token budget and its ratio to the
+    # model size once before the training loop starts.
+    # ---------------------------------------------------------
+    if is_global_zero_process():
+        show_training_token_budget(
+            max_steps=args.max_steps,
+            batch_size=args.batch_size,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            device_count=device_count,
+            max_len=args.max_len,
+            parameter_count=sum(parameter.numel() for parameter in model.parameters()),
+        )
 
     # ---------------------------------------------------------
     # Initialize a fresh training run from saved model weights
