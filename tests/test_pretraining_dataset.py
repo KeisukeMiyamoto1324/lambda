@@ -64,6 +64,18 @@ class FakeStreamingDataset:
         # ---------------------------------------------------------
         return self
 
+    def select_columns(self, column_names: list[str]) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Keep only requested columns to match the HF streaming API
+        # used to avoid reading unused large dataset fields.
+        # ---------------------------------------------------------
+        return FakeStreamingDataset(
+            samples=[
+                {column_name: sample[column_name] for column_name in column_names}
+                for sample in self.samples
+            ]
+        )
+
     def shard(self, num_shards: int, index: int) -> "FakeStreamingDataset":
         # ---------------------------------------------------------
         # Return one deterministic worker shard so streaming worker

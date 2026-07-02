@@ -84,6 +84,7 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
             split=self.corpus_case.split,
             streaming=True,
         )
+        dataset = dataset.select_columns([self.corpus_case.text_column])
 
         # ---------------------------------------------------------
         # Split remote sources into smaller HF streaming shards before
