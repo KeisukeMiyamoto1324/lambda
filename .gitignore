@@ -11,3 +11,4 @@ model-10m/checkpoints/
 .pytest_cache/
 docs/
 setup.sh
+eval_results/
