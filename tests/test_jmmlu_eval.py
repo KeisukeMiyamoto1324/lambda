@@ -7,13 +7,19 @@ from unittest.mock import patch
 import torch
 import torch.nn as nn
 
+from src.eval.jmmlu.cli import parse_args
 from src.eval.jmmlu.dataset import ANSWER_LABELS
 from src.eval.jmmlu.dataset import JmmluExample
 from src.eval.jmmlu.dataset import load_examples
+from src.eval.jmmlu.models import NativeChoiceScorer
+from src.eval.jmmlu.models import TransformersChoiceScorer
+from src.eval.jmmlu.models import build_hf_labels
+from src.eval.jmmlu.models import compute_row_losses
+from src.eval.jmmlu.models import resolve_backend
+from src.eval.jmmlu.models import score_native_answer_label
 from src.eval.jmmlu.runtime import evaluate_examples
 from src.eval.jmmlu.runtime import save_result
 from src.eval.jmmlu.scoring import build_prompt
-from src.eval.jmmlu.scoring import score_answer_label
 
 
 class FakeTokenizer:
@@ -59,6 +65,45 @@ class FakeModel(nn.Module):
         self.labels.append(label_ids)
         scored_ids = [token_id for token_id in label_ids if token_id != 0]
         return torch.tensor(float(scored_ids[-1] - ord("A")))
+
+
+class FakeTransformersTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+        # ---------------------------------------------------------
+        # Encode characters into small ids for deterministic
+        # Transformers scorer tests.
+        # ---------------------------------------------------------
+        prefix = [1] if add_special_tokens else []
+        return {"input_ids": [*prefix, *[ord(character) for character in text]]}
+
+
+class FakeTransformersOutput:
+    def __init__(self, logits: torch.Tensor) -> None:
+        self.logits = logits
+
+
+class FakeTransformersModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.probe = nn.Parameter(torch.zeros(1))
+        self.labels: torch.Tensor | None = None
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> FakeTransformersOutput:
+        # ---------------------------------------------------------
+        # Create logits that make lower token ids less costly so
+        # answer A is preferred over B/C/D.
+        # ---------------------------------------------------------
+        del attention_mask
+        vocab_size = 128
+        logits = torch.zeros((*input_ids.shape, vocab_size), dtype=torch.float32, device=input_ids.device)
+        logits[:, :, ord("A")] = 4.0
+        logits[:, :, ord("B")] = 3.0
+        logits[:, :, ord("C")] = 2.0
+        logits[:, :, ord("D")] = 1.0
+        return FakeTransformersOutput(logits=logits)
 
 
 class JmmluEvalTest(unittest.TestCase):
@@ -110,7 +155,41 @@ class JmmluEvalTest(unittest.TestCase):
             ],
         )
 
-    def test_score_answer_label_masks_prompt_tokens(self) -> None:
+    def test_parse_args_accepts_model_and_backend(self) -> None:
+        # ---------------------------------------------------------
+        # Parse the simplified JMMLU CLI without keeping the old
+        # model directory flag.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["evaluate.py", "--model", "Qwen/Qwen3-0.6B", "--backend", "hf"]):
+            args = parse_args()
+
+        self.assertEqual(args.model, "Qwen/Qwen3-0.6B")
+        self.assertEqual(args.backend, "hf")
+
+    def test_resolve_backend_detects_native_model_artifacts(self) -> None:
+        # ---------------------------------------------------------
+        # Auto-select native only when local PyTorch model artifacts
+        # are present in the model directory.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            (model_dir / "model.pth").write_bytes(b"")
+            (model_dir / "model_config.json").write_text("{}", encoding="utf-8")
+
+            backend = resolve_backend(model_source=str(model_dir), backend="auto")
+
+        self.assertEqual(backend, "native")
+        self.assertEqual(resolve_backend(model_source="Qwen/Qwen3-0.6B", backend="auto"), "hf")
+
+    def test_resolve_backend_rejects_missing_local_path(self) -> None:
+        # ---------------------------------------------------------
+        # Reject path-like local model sources before trying to
+        # resolve them as Hugging Face repository ids.
+        # ---------------------------------------------------------
+        with self.assertRaises(FileNotFoundError):
+            resolve_backend(model_source="models/missing-model", backend="auto")
+
+    def test_score_native_answer_label_masks_prompt_tokens(self) -> None:
         # ---------------------------------------------------------
         # Keep prompt labels masked with pad_token_id and score
         # only the answer label suffix.
@@ -118,7 +197,7 @@ class JmmluEvalTest(unittest.TestCase):
         model = FakeModel()
         tokenizer = FakeTokenizer()
 
-        loss = score_answer_label(
+        loss = score_native_answer_label(
             model=model,
             tokenizer=tokenizer,
             prompt="Question: test\nAnswer:",
@@ -133,25 +212,79 @@ class JmmluEvalTest(unittest.TestCase):
         self.assertEqual(model.labels[-1][-1], ord("A"))
         self.assertTrue(all(token_id == 0 for token_id in model.labels[-1][:-2]))
 
+    def test_build_hf_labels_masks_prompt_and_padding_tokens(self) -> None:
+        # ---------------------------------------------------------
+        # Keep only answer suffix positions visible to the HF loss
+        # calculation.
+        # ---------------------------------------------------------
+        labels = build_hf_labels(
+            full_token_ids=[[1, 10, 20, 30], [1, 10, 21]],
+            prompt_len=2,
+            max_len=4,
+            pad_token_id=0,
+        )
+
+        self.assertEqual(labels, [[-100, 20, 30, -100], [-100, 21, -100, -100]])
+
+    def test_compute_row_losses_returns_per_choice_losses(self) -> None:
+        # ---------------------------------------------------------
+        # Average unmasked token losses per row so batched HF
+        # scoring can still compare each answer independently.
+        # ---------------------------------------------------------
+        logits = torch.zeros((2, 3, 4), dtype=torch.float32)
+        logits[0, 1, 1] = 5.0
+        logits[1, 1, 2] = 5.0
+        labels = torch.tensor([[-100, 1, -100], [-100, 1, -100]])
+
+        losses = compute_row_losses(logits=logits, labels=labels)
+
+        self.assertLess(losses[0], losses[1])
+
+    def test_transformers_choice_scorer_batches_answer_labels(self) -> None:
+        # ---------------------------------------------------------
+        # Score answer labels through the generic HF scorer without
+        # using a real remote model.
+        # ---------------------------------------------------------
+        scorer = TransformersChoiceScorer(
+            model=FakeTransformersModel(),
+            tokenizer=FakeTransformersTokenizer(),
+            device=torch.device("cpu"),
+            model_source="fake/hf",
+            torch_dtype_name="auto",
+        )
+
+        losses = scorer.score_answer_labels(prompt="Question: test\nAnswer:", answer_labels=ANSWER_LABELS)
+
+        self.assertEqual(len(losses), 4)
+        self.assertEqual(min(range(len(losses)), key=lambda index: losses[index]), 0)
+
     def test_evaluate_examples_returns_overall_and_subject_accuracy(self) -> None:
         # ---------------------------------------------------------
         # Aggregate deterministic fake predictions into overall
         # and subject-level result objects.
         # ---------------------------------------------------------
+        model = FakeModel()
+        tokenizer = FakeTokenizer()
+        scorer = NativeChoiceScorer(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=128,
+            pad_token_id=0,
+            bos_token_id=1,
+            device=torch.device("cpu"),
+            model_source="models/test",
+            torch_dtype_name="auto",
+        )
         result = evaluate_examples(
-            model=FakeModel(),
-            tokenizer=FakeTokenizer(),
+            scorer=scorer,
             examples=[
                 JmmluExample("s1", "q1", ["a", "b", "c", "d"], "A"),
                 JmmluExample("s1", "q2", ["a", "b", "c", "d"], "B"),
             ],
-            model_source="models/test",
-            device=torch.device("cpu"),
-            torch_dtype="auto",
-            max_seq_len=128,
         )
 
         self.assertEqual(ANSWER_LABELS, ("A", "B", "C", "D"))
+        self.assertEqual(result.backend, "native")
         self.assertEqual(result.overall.correct, 1)
         self.assertEqual(result.overall.total, 2)
         self.assertEqual(result.overall.accuracy, 0.5)
@@ -162,14 +295,19 @@ class JmmluEvalTest(unittest.TestCase):
         # Save JSON summaries to the requested path and create
         # missing parent directories.
         # ---------------------------------------------------------
-        result = evaluate_examples(
+        scorer = NativeChoiceScorer(
             model=FakeModel(),
             tokenizer=FakeTokenizer(),
-            examples=[JmmluExample("s1", "q1", ["a", "b", "c", "d"], "A")],
-            model_source="models/test",
-            device=torch.device("cpu"),
-            torch_dtype="auto",
             max_seq_len=128,
+            pad_token_id=0,
+            bos_token_id=1,
+            device=torch.device("cpu"),
+            model_source="models/test",
+            torch_dtype_name="auto",
+        )
+        result = evaluate_examples(
+            scorer=scorer,
+            examples=[JmmluExample("s1", "q1", ["a", "b", "c", "d"], "A")],
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:

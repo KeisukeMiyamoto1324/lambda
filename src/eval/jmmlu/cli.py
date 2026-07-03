@@ -3,14 +3,16 @@ import argparse
 
 def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
-    # Define CLI arguments for JMMLU evaluation with native
-    # PyTorch model artifacts used by this project.
+    # Define CLI arguments for JMMLU evaluation across native and
+    # Hugging Face causal language models.
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-dir", type=str, required=True)
+    parser.add_argument("--model", type=str, required=True)
+    parser.add_argument("--backend", choices=["auto", "native", "hf"], default="auto")
     parser.add_argument("--subjects", nargs="*", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-json", type=str, default=None)
+    parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument(
         "--torch-dtype",
         choices=["auto", "float16", "bfloat16", "float32"],
