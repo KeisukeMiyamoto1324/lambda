@@ -15,6 +15,7 @@ from src.eval.jmmlu.dataset import load_examples
 from src.eval.jmmlu.scoring import predict_answer
 from src.inference_base.generation import resolve_torch_dtype
 from src.shared.console import console
+from src.shared.console import progress_manager
 from src.shared.device_utils import resolve_device
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import resolve_model_dir
@@ -100,24 +101,31 @@ def evaluate_examples(
     pad_token_id = tokenizer.token_to_id(tokenizer.pad_token)
     bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
     subject_counts: dict[str, dict[str, int]] = {}
+    task_id = progress_manager.add_task(description="JMMLU", total=len(examples))
 
-    for index, example in enumerate(examples, start=1):
-        prediction = predict_answer(
-            model=model,
-            tokenizer=tokenizer,
-            example=example,
-            device=device,
-            pad_token_id=pad_token_id,
-            bos_token_id=bos_token_id,
-            max_seq_len=max_seq_len,
-        )
-        subject_count = subject_counts.setdefault(example.subject, {"correct": 0, "total": 0})
-        subject_count["correct"] += int(prediction == example.answer)
-        subject_count["total"] += 1
+    try:
+        for index, example in enumerate(examples, start=1):
+            prediction = predict_answer(
+                model=model,
+                tokenizer=tokenizer,
+                example=example,
+                device=device,
+                pad_token_id=pad_token_id,
+                bos_token_id=bos_token_id,
+                max_seq_len=max_seq_len,
+            )
+            subject_count = subject_counts.setdefault(example.subject, {"correct": 0, "total": 0})
+            subject_count["correct"] += int(prediction == example.answer)
+            subject_count["total"] += 1
 
-        if index % 10 == 0 or index == len(examples):
             correct = sum(counts["correct"] for counts in subject_counts.values())
-            console.print(f"[cyan]evaluated[/cyan] {index}/{len(examples)} accuracy={correct / index:.4f}")
+            progress_manager.update(
+                task_id=task_id,
+                advance=1,
+                metrics=f"accuracy={correct / index:.4f}",
+            )
+    finally:
+        progress_manager.finish_task(task_id=task_id)
 
     return build_evaluation_result(
         model_source=model_source,
