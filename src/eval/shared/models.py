@@ -86,16 +86,21 @@ class TransformersChoiceScorer:
 
     def score_continuations(self, prompt: str, continuations: tuple[str, ...]) -> list[float]:
         # ---------------------------------------------------------
-        # Batch all continuations into one Transformers forward pass
-        # and average loss only over each candidate suffix.
+        # Tokenize each full prompt plus continuation because some
+        # tokenizers produce different suffix ids at the boundary.
         # ---------------------------------------------------------
         encoded_prompt = self.tokenizer(prompt, add_special_tokens=True)
         prompt_ids = [int(token_id) for token_id in encoded_prompt["input_ids"]]
-        encoded_continuations = [
-            self.tokenizer(continuation, add_special_tokens=False)["input_ids"]
+        full_token_ids = [
+            [
+                int(token_id)
+                for token_id in self.tokenizer(
+                    f"{prompt}{continuation}",
+                    add_special_tokens=True,
+                )["input_ids"]
+            ]
             for continuation in continuations
         ]
-        full_token_ids = [[*prompt_ids, *continuation_ids] for continuation_ids in encoded_continuations]
         max_len = max(len(token_ids) for token_ids in full_token_ids)
         pad_token_id = resolve_hf_pad_token_id(tokenizer=self.tokenizer)
         input_rows = [
@@ -257,12 +262,11 @@ def score_native_continuation(
     max_seq_len: int,
 ) -> float:
     # ---------------------------------------------------------
-    # Mask prompt tokens and compute native autoregressive loss
-    # only for the candidate continuation tokens.
+    # Tokenize the full text so boundary-sensitive tokenizers use
+    # the same ids as real generation.
     # ---------------------------------------------------------
     prompt_token_ids = [bos_token_id, *tokenizer.tokenize(prompt)]
-    continuation_token_ids = tokenizer.tokenize(continuation)
-    full_token_ids = [*prompt_token_ids, *continuation_token_ids]
+    full_token_ids = [bos_token_id, *tokenizer.tokenize(f"{prompt}{continuation}")]
     input_token_ids = full_token_ids[:-1]
 
     if len(input_token_ids) > max_seq_len:

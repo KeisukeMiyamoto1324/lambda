@@ -106,6 +106,37 @@ class FakeTransformersModel(nn.Module):
         return FakeTransformersOutput(logits=logits)
 
 
+class BoundaryAwareTransformersTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+        # ---------------------------------------------------------
+        # Encode standalone answer labels differently from labels
+        # attached to a prompt, like boundary-sensitive tokenizers.
+        # ---------------------------------------------------------
+        prefix = [1] if add_special_tokens else []
+        offset = 20 if not add_special_tokens else 0
+        return {"input_ids": [*prefix, *[ord(character) + offset for character in text]]}
+
+
+class BoundaryAwareTransformersModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.probe = nn.Parameter(torch.zeros(1))
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> FakeTransformersOutput:
+        # ---------------------------------------------------------
+        # Prefer the prompt-attached A token, but prefer standalone B
+        # if the scorer incorrectly tokenizes the label alone.
+        # ---------------------------------------------------------
+        del attention_mask
+        logits = torch.zeros((*input_ids.shape, 128), dtype=torch.float32)
+        logits[:, :, ord("A")] = 6.0
+        logits[:, :, ord("B") + 20] = 6.0
+        return FakeTransformersOutput(logits=logits)
+
+
 class JmmluEvalTest(unittest.TestCase):
     def test_build_prompt_uses_mmlu_answer_label_format(self) -> None:
         # ---------------------------------------------------------
@@ -257,6 +288,23 @@ class JmmluEvalTest(unittest.TestCase):
 
         self.assertEqual(len(losses), 4)
         self.assertEqual(min(range(len(losses)), key=lambda index: losses[index]), 0)
+
+    def test_transformers_choice_scorer_tokenizes_full_continuation_text(self) -> None:
+        # ---------------------------------------------------------
+        # Score the token ids from prompt plus continuation, not
+        # from the continuation encoded by itself.
+        # ---------------------------------------------------------
+        scorer = TransformersChoiceScorer(
+            model=BoundaryAwareTransformersModel(),
+            tokenizer=BoundaryAwareTransformersTokenizer(),
+            device=torch.device("cpu"),
+            model_source="fake/hf",
+            torch_dtype_name="auto",
+        )
+
+        losses = scorer.score_continuations(prompt="Question: test\nAnswer:", continuations=("A", "B"))
+
+        self.assertLess(losses[0], losses[1])
 
     def test_evaluate_examples_returns_overall_and_subject_accuracy(self) -> None:
         # ---------------------------------------------------------
