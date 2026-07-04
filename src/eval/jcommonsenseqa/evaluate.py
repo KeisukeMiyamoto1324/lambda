@@ -8,14 +8,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.eval.jmmlu.cli import parse_args
-from src.eval.jmmlu.runtime import run_evaluation
+from src.eval.jcommonsenseqa.cli import parse_args
+from src.eval.jcommonsenseqa.runtime import run_evaluation
 
 
 def main() -> None:
     # ---------------------------------------------------------
     # Keep this script as a small entrypoint. Implementation
-    # details live in focused JMMLU modules.
+    # details live in focused JCommonsenseQA modules.
     # ---------------------------------------------------------
     args = parse_args()
     run_evaluation(args=args)

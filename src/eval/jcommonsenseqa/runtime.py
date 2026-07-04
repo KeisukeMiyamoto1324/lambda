@@ -5,25 +5,22 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from rich.table import Table
-
-from src.eval.jmmlu.dataset import JMMLU_DATASET_ID
-from src.eval.jmmlu.dataset import JmmluExample
-from src.eval.jmmlu.dataset import download_jmmlu_archive
-from src.eval.jmmlu.dataset import load_examples
-from src.eval.jmmlu.scoring import predict_answer
+from src.eval.jcommonsenseqa.dataset import JCOMMONSENSEQA_CONFIG
+from src.eval.jcommonsenseqa.dataset import JCOMMONSENSEQA_DATASET_ID
+from src.eval.jcommonsenseqa.dataset import JCommonsenseQAExample
+from src.eval.jcommonsenseqa.dataset import load_examples
+from src.eval.jcommonsenseqa.scoring import predict_answer
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import load_choice_scorer
 from src.shared.console import console
 from src.shared.console import progress_manager
 
 
-DEFAULT_OUTPUT_DIR = Path("eval_results/jmmlu")
+DEFAULT_OUTPUT_DIR = Path("eval_results/jcommonsenseqa")
 
 
 @dataclass(frozen=True)
-class SubjectResult:
-    subject: str
+class AccuracyResult:
     accuracy: float
     correct: int
     total: int
@@ -34,17 +31,18 @@ class EvaluationResult:
     model_source: str
     backend: str
     dataset: str
+    config: str
+    split: str
     scoring_method: str
     device: str
     torch_dtype: str
-    overall: SubjectResult
-    by_subject: list[SubjectResult]
+    overall: AccuracyResult
 
 
 def run_evaluation(args: argparse.Namespace) -> None:
     # ---------------------------------------------------------
-    # Load the selected model scorer, JMMLU examples, run
-    # evaluation, then print and save the final metrics.
+    # Load the selected model scorer and JCommonsenseQA examples,
+    # then run evaluation and save the final metrics.
     # ---------------------------------------------------------
     scorer = load_choice_scorer(
         model_source=args.model,
@@ -52,18 +50,16 @@ def run_evaluation(args: argparse.Namespace) -> None:
         torch_dtype_name=args.torch_dtype,
         trust_remote_code=args.trust_remote_code,
     )
-
-    archive_path = download_jmmlu_archive()
-    subjects = None if args.subjects is None else [str(subject) for subject in args.subjects]
-    examples = load_examples(archive_path=archive_path, subjects=subjects)
+    examples = load_examples(split=args.split)
     selected_examples = examples if args.limit is None else examples[: args.limit]
 
     if not selected_examples:
-        raise ValueError("No JMMLU examples were selected")
+        raise ValueError("No JCommonsenseQA examples were selected")
 
     result = evaluate_examples(
         scorer=scorer,
         examples=selected_examples,
+        split=args.split,
     )
     render_result(result=result)
     save_result(result=result, output_path=resolve_output_json(output_json=args.output_json))
@@ -71,14 +67,15 @@ def run_evaluation(args: argparse.Namespace) -> None:
 
 def evaluate_examples(
     scorer: ChoiceScorer,
-    examples: list[JmmluExample],
+    examples: list[JCommonsenseQAExample],
+    split: str,
 ) -> EvaluationResult:
     # ---------------------------------------------------------
-    # Evaluate all selected examples while tracking both overall
-    # and per-subject accuracy counts.
+    # Evaluate selected examples and track overall exact-match
+    # accuracy for numeric answer labels.
     # ---------------------------------------------------------
-    subject_counts: dict[str, dict[str, int]] = {}
-    task_id = progress_manager.add_task(description="JMMLU", total=len(examples))
+    correct = 0
+    task_id = progress_manager.add_task(description="JCommonsenseQA", total=len(examples))
 
     try:
         for index, example in enumerate(examples, start=1):
@@ -86,11 +83,7 @@ def evaluate_examples(
                 scorer=scorer,
                 example=example,
             )
-            subject_count = subject_counts.setdefault(example.subject, {"correct": 0, "total": 0})
-            subject_count["correct"] += int(prediction == example.answer)
-            subject_count["total"] += 1
-
-            correct = sum(counts["correct"] for counts in subject_counts.values())
+            correct += int(prediction == example.answer)
             progress_manager.update(
                 task_id=task_id,
                 advance=1,
@@ -101,74 +94,51 @@ def evaluate_examples(
 
     return build_evaluation_result(
         scorer=scorer,
-        subject_counts=subject_counts,
+        correct=correct,
+        total=len(examples),
+        split=split,
     )
 
 
 def build_evaluation_result(
     scorer: ChoiceScorer,
-    subject_counts: dict[str, dict[str, int]],
+    correct: int,
+    total: int,
+    split: str,
 ) -> EvaluationResult:
     # ---------------------------------------------------------
-    # Convert raw counters into serializable result dataclasses
+    # Convert raw counters into a serializable result dataclass
     # for terminal rendering and JSON output.
     # ---------------------------------------------------------
-    by_subject = [
-        SubjectResult(
-            subject=subject,
-            accuracy=counts["correct"] / counts["total"],
-            correct=counts["correct"],
-            total=counts["total"],
-        )
-        for subject, counts in sorted(subject_counts.items())
-    ]
-    total = sum(result.total for result in by_subject)
-    correct = sum(result.correct for result in by_subject)
-    overall = SubjectResult(
-        subject="overall",
-        accuracy=correct / total,
-        correct=correct,
-        total=total,
-    )
     return EvaluationResult(
         model_source=scorer.model_source,
         backend=scorer.backend,
-        dataset=JMMLU_DATASET_ID,
-        scoring_method="zero_shot_mmlu_answer_label_log_likelihood",
+        dataset=JCOMMONSENSEQA_DATASET_ID,
+        config=JCOMMONSENSEQA_CONFIG,
+        split=split,
+        scoring_method="zero_shot_llm_jp_eval_numeric_label_log_likelihood",
         device=scorer.device_name,
         torch_dtype=scorer.torch_dtype_name,
-        overall=overall,
-        by_subject=by_subject,
+        overall=AccuracyResult(
+            accuracy=correct / total,
+            correct=correct,
+            total=total,
+        ),
     )
 
 
 def render_result(result: EvaluationResult) -> None:
     # ---------------------------------------------------------
-    # Print overall and subject-level metrics with Rich tables so
-    # terminal output stays easy to scan.
+    # Print overall metrics with Rich console output so terminal
+    # results stay easy to scan.
     # ---------------------------------------------------------
-    console.print("[bold cyan]JMMLU result[/bold cyan]")
+    console.print("[bold cyan]JCommonsenseQA result[/bold cyan]")
     console.print(f"model: {result.model_source}")
     console.print(f"backend: {result.backend}")
+    console.print(f"split: {result.split}")
     console.print(f"accuracy: {result.overall.accuracy:.4f}")
     console.print(f"correct: {result.overall.correct}")
     console.print(f"total: {result.overall.total}")
-
-    table = Table(title="JMMLU by subject")
-    table.add_column("subject")
-    table.add_column("accuracy", justify="right")
-    table.add_column("correct", justify="right")
-    table.add_column("total", justify="right")
-
-    for subject_result in result.by_subject:
-        table.add_row(
-            subject_result.subject,
-            f"{subject_result.accuracy:.4f}",
-            str(subject_result.correct),
-            str(subject_result.total),
-        )
-
-    console.print(table)
 
 
 def resolve_output_json(output_json: str | None) -> Path:

@@ -1,6 +1,10 @@
-from src.eval.JMMLU.dataset import ANSWER_LABELS
-from src.eval.JMMLU.dataset import JmmluExample
-from src.eval.JMMLU.models import ChoiceScorer
+from src.eval.jmmlu.dataset import ANSWER_LABELS
+from src.eval.jmmlu.dataset import JmmluExample
+from src.eval.shared.models import ChoiceScorer
+from src.eval.shared.multiple_choice import predict_choice
+
+
+ANSWER_CONTINUATIONS = tuple(f" {label}" for label in ANSWER_LABELS)
 
 
 def build_prompt(example: JmmluExample) -> str:
@@ -21,6 +25,9 @@ def predict_answer(scorer: ChoiceScorer, example: JmmluExample) -> str:
     # lowest language-model loss.
     # ---------------------------------------------------------
     prompt = build_prompt(example=example)
-    losses = scorer.score_answer_labels(prompt=prompt, answer_labels=ANSWER_LABELS)
-    best_index = min(range(len(losses)), key=lambda index: losses[index])
-    return ANSWER_LABELS[best_index]
+    return predict_choice(
+        scorer=scorer,
+        prompt=prompt,
+        answer_labels=ANSWER_LABELS,
+        continuations=ANSWER_CONTINUATIONS,
+    )
