@@ -27,6 +27,17 @@ class ChoiceScorer(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class TextScore:
+    loss_sum: float
+    token_count: int
+
+
+class TextScorer(ChoiceScorer, Protocol):
+    def score_text(self, text: str) -> TextScore:
+        ...
+
+
 @dataclass
 class NativeChoiceScorer:
     model: torch.nn.Module
@@ -69,6 +80,20 @@ class NativeChoiceScorer:
         # ---------------------------------------------------------
         continuations = tuple(f" {answer_label}" for answer_label in answer_labels)
         return self.score_continuations(prompt=prompt, continuations=continuations)
+
+    def score_text(self, text: str) -> TextScore:
+        # ---------------------------------------------------------
+        # Score full text perplexity with the native decoder while
+        # splitting long inputs across the model context window.
+        # ---------------------------------------------------------
+        return score_native_text(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            text=text,
+            device=self.device,
+            bos_token_id=self.bos_token_id,
+            max_seq_len=self.max_seq_len,
+        )
 
 
 @dataclass
@@ -130,6 +155,18 @@ class TransformersChoiceScorer:
         # ---------------------------------------------------------
         continuations = tuple(f" {answer_label}" for answer_label in answer_labels)
         return self.score_continuations(prompt=prompt, continuations=continuations)
+
+    def score_text(self, text: str) -> TextScore:
+        # ---------------------------------------------------------
+        # Score full text perplexity with Transformers while keeping
+        # each forward pass inside the model context window.
+        # ---------------------------------------------------------
+        return score_hf_text(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            text=text,
+            device=self.device,
+        )
 
 
 def load_choice_scorer(
@@ -309,6 +346,157 @@ def score_native_answer_label(
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,
         max_seq_len=max_seq_len,
+    )
+
+
+def score_native_text(
+    model: torch.nn.Module,
+    tokenizer: ByteLevelBPE,
+    text: str,
+    device: torch.device,
+    bos_token_id: int,
+    max_seq_len: int,
+) -> TextScore:
+    # ---------------------------------------------------------
+    # Convert text to next-token prediction chunks. The BOS token
+    # is context only and is not counted in perplexity.
+    # ---------------------------------------------------------
+    token_ids = [bos_token_id, *tokenizer.tokenize(text)]
+    input_token_ids = token_ids[:-1]
+    label_token_ids = token_ids[1:]
+    chunk_starts = range(0, len(input_token_ids), max_seq_len)
+    chunk_scores = [
+        score_native_text_chunk(
+            model=model,
+            input_token_ids=input_token_ids[chunk_start : chunk_start + max_seq_len],
+            label_token_ids=label_token_ids[chunk_start : chunk_start + max_seq_len],
+            device=device,
+        )
+        for chunk_start in chunk_starts
+    ]
+    return merge_text_scores(scores=chunk_scores)
+
+
+def score_native_text_chunk(
+    model: torch.nn.Module,
+    input_token_ids: list[int],
+    label_token_ids: list[int],
+    device: torch.device,
+) -> TextScore:
+    # ---------------------------------------------------------
+    # Run one native model chunk and convert mean token loss back
+    # to summed loss for corpus-level perplexity.
+    # ---------------------------------------------------------
+    input_tokens = torch.tensor([input_token_ids], dtype=torch.long, device=device)
+    labels = torch.tensor([label_token_ids], dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        loss = model.compute_chunked_loss(input_tokens=input_tokens, labels=labels)
+
+    token_count = len(label_token_ids)
+    return TextScore(
+        loss_sum=float(loss.item()) * token_count,
+        token_count=token_count,
+    )
+
+
+def score_hf_text(
+    model: Any,
+    tokenizer: Any,
+    text: str,
+    device: torch.device,
+) -> TextScore:
+    # ---------------------------------------------------------
+    # Convert text to next-token prediction chunks using the same
+    # tokenizer path as regular Transformers causal LM scoring.
+    # ---------------------------------------------------------
+    token_ids = [int(token_id) for token_id in tokenizer(text, add_special_tokens=True)["input_ids"]]
+    max_seq_len = resolve_hf_max_seq_len(model=model, tokenizer=tokenizer)
+    input_token_ids = token_ids[:-1]
+    label_token_ids = token_ids[1:]
+    chunk_starts = range(0, len(input_token_ids), max_seq_len)
+    chunk_scores = [
+        score_hf_text_chunk(
+            model=model,
+            input_token_ids=input_token_ids[chunk_start : chunk_start + max_seq_len],
+            label_token_ids=label_token_ids[chunk_start : chunk_start + max_seq_len],
+            device=device,
+        )
+        for chunk_start in chunk_starts
+    ]
+    return merge_text_scores(scores=chunk_scores)
+
+
+def score_hf_text_chunk(
+    model: Any,
+    input_token_ids: list[int],
+    label_token_ids: list[int],
+    device: torch.device,
+) -> TextScore:
+    # ---------------------------------------------------------
+    # Run one Transformers model chunk and sum cross-entropy over
+    # all visible next-token labels.
+    # ---------------------------------------------------------
+    input_ids = torch.tensor([input_token_ids], dtype=torch.long, device=device)
+    labels = torch.tensor([label_token_ids], dtype=torch.long, device=device)
+    attention_mask = torch.ones_like(input_ids)
+
+    with torch.no_grad():
+        output = model(input_ids=input_ids, attention_mask=attention_mask)
+
+    loss_sum = compute_loss_sum(logits=output.logits, labels=labels)
+    return TextScore(
+        loss_sum=loss_sum,
+        token_count=len(label_token_ids),
+    )
+
+
+def resolve_hf_max_seq_len(model: Any, tokenizer: Any) -> int:
+    # ---------------------------------------------------------
+    # Pick the smallest real context limit exposed by the model or
+    # tokenizer so chunks fit both interfaces.
+    # ---------------------------------------------------------
+    candidates = [
+        int(value)
+        for value in (
+            getattr(tokenizer, "model_max_length", None),
+            getattr(getattr(model, "config", None), "max_position_embeddings", None),
+        )
+        if isinstance(value, int) and 0 < value < 1_000_000
+    ]
+
+    if not candidates:
+        raise ValueError("Hugging Face model or tokenizer must define a finite context length")
+
+    return min(candidates)
+
+
+def compute_loss_sum(logits: torch.Tensor, labels: torch.Tensor) -> float:
+    # ---------------------------------------------------------
+    # Sum cross-entropy for aligned next-token labels. The caller
+    # already shifted input ids and labels by one position.
+    # ---------------------------------------------------------
+    losses = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        labels.view(-1),
+        reduction="sum",
+    )
+    return float(losses.item())
+
+
+def merge_text_scores(scores: list[TextScore]) -> TextScore:
+    # ---------------------------------------------------------
+    # Combine chunk scores without averaging twice so corpus
+    # perplexity is weighted by token count.
+    # ---------------------------------------------------------
+    token_count = sum(score.token_count for score in scores)
+
+    if token_count == 0:
+        raise ValueError("Text must contain at least one scored token")
+
+    return TextScore(
+        loss_sum=sum(score.loss_sum for score in scores),
+        token_count=token_count,
     )
 
 
