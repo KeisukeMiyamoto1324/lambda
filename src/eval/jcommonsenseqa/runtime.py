@@ -1,6 +1,4 @@
 import argparse
-import json
-from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,18 +10,14 @@ from src.eval.jcommonsenseqa.dataset import load_examples
 from src.eval.jcommonsenseqa.scoring import predict_answer
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import load_choice_scorer
+from src.eval.shared.runtime import AccuracyResult
+from src.eval.shared.runtime import count_correct_predictions
+from src.eval.shared.runtime import save_json_result
+from src.eval.shared.runtime import select_examples
 from src.shared.console import console
-from src.shared.console import progress_manager
 
 
 DEFAULT_OUTPUT_DIR = Path("eval_results/jcommonsenseqa")
-
-
-@dataclass(frozen=True)
-class AccuracyResult:
-    accuracy: float
-    correct: int
-    total: int
 
 
 @dataclass(frozen=True)
@@ -51,10 +45,11 @@ def run_evaluation(args: argparse.Namespace) -> None:
         trust_remote_code=args.trust_remote_code,
     )
     examples = load_examples(split=args.split)
-    selected_examples = examples if args.limit is None else examples[: args.limit]
-
-    if not selected_examples:
-        raise ValueError("No JCommonsenseQA examples were selected")
+    selected_examples = select_examples(
+        examples=examples,
+        limit=args.limit,
+        benchmark_name="JCommonsenseQA",
+    )
 
     result = evaluate_examples(
         scorer=scorer,
@@ -71,39 +66,26 @@ def evaluate_examples(
     split: str,
 ) -> EvaluationResult:
     # ---------------------------------------------------------
-    # Evaluate selected examples and track overall exact-match
-    # accuracy for numeric answer labels.
+    # Evaluate selected examples with shared exact-match logic and
+    # return the benchmark-specific result shape.
     # ---------------------------------------------------------
-    correct = 0
-    task_id = progress_manager.add_task(description="JCommonsenseQA", total=len(examples))
-
-    try:
-        for index, example in enumerate(examples, start=1):
-            prediction = predict_answer(
-                scorer=scorer,
-                example=example,
-            )
-            correct += int(prediction == example.answer)
-            progress_manager.update(
-                task_id=task_id,
-                advance=1,
-                metrics=f"accuracy={correct / index:.4f}",
-            )
-    finally:
-        progress_manager.finish_task(task_id=task_id)
+    overall = count_correct_predictions(
+        scorer=scorer,
+        examples=examples,
+        benchmark_name="JCommonsenseQA",
+        predict_answer=predict_answer,
+    )
 
     return build_evaluation_result(
         scorer=scorer,
-        correct=correct,
-        total=len(examples),
+        overall=overall,
         split=split,
     )
 
 
 def build_evaluation_result(
     scorer: ChoiceScorer,
-    correct: int,
-    total: int,
+    overall: AccuracyResult,
     split: str,
 ) -> EvaluationResult:
     # ---------------------------------------------------------
@@ -119,11 +101,7 @@ def build_evaluation_result(
         scoring_method="zero_shot_llm_jp_eval_numeric_label_log_likelihood",
         device=scorer.device_name,
         torch_dtype=scorer.torch_dtype_name,
-        overall=AccuracyResult(
-            accuracy=correct / total,
-            correct=correct,
-            total=total,
-        ),
+        overall=overall,
     )
 
 
@@ -158,9 +136,4 @@ def save_result(result: EvaluationResult, output_path: Path) -> None:
     # Persist the evaluation summary as UTF-8 JSON for experiment
     # tracking outside the terminal output.
     # ---------------------------------------------------------
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(asdict(result), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    console.print(f"[cyan]saved json[/cyan] {output_path}")
+    save_json_result(result=result, output_path=output_path)

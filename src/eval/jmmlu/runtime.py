@@ -1,6 +1,4 @@
 import argparse
-import json
-from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +12,9 @@ from src.eval.jmmlu.dataset import load_examples
 from src.eval.jmmlu.scoring import predict_answer
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import load_choice_scorer
+from src.eval.shared.runtime import AccuracyResult
+from src.eval.shared.runtime import save_json_result
+from src.eval.shared.runtime import select_examples
 from src.shared.console import console
 from src.shared.console import progress_manager
 
@@ -22,11 +23,8 @@ DEFAULT_OUTPUT_DIR = Path("eval_results/jmmlu")
 
 
 @dataclass(frozen=True)
-class SubjectResult:
+class SubjectResult(AccuracyResult):
     subject: str
-    accuracy: float
-    correct: int
-    total: int
 
 
 @dataclass(frozen=True)
@@ -56,10 +54,11 @@ def run_evaluation(args: argparse.Namespace) -> None:
     archive_path = download_jmmlu_archive()
     subjects = None if args.subjects is None else [str(subject) for subject in args.subjects]
     examples = load_examples(archive_path=archive_path, subjects=subjects)
-    selected_examples = examples if args.limit is None else examples[: args.limit]
-
-    if not selected_examples:
-        raise ValueError("No JMMLU examples were selected")
+    selected_examples = select_examples(
+        examples=examples,
+        limit=args.limit,
+        benchmark_name="JMMLU",
+    )
 
     result = evaluate_examples(
         scorer=scorer,
@@ -188,9 +187,4 @@ def save_result(result: EvaluationResult, output_path: Path) -> None:
     # Persist the evaluation summary as UTF-8 JSON for experiment
     # tracking outside the terminal output.
     # ---------------------------------------------------------
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(asdict(result), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    console.print(f"[cyan]saved json[/cyan] {output_path}")
+    save_json_result(result=result, output_path=output_path)

@@ -1,21 +1,13 @@
 import argparse
 
+from src.eval.shared.cli import build_eval_parser
+
 
 def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
     # Define CLI arguments for JMMLU evaluation across native and
     # Hugging Face causal language models.
     # ---------------------------------------------------------
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True)
-    parser.add_argument("--backend", choices=["auto", "native", "hf"], default="auto")
+    parser = build_eval_parser()
     parser.add_argument("--subjects", nargs="*", default=None)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--output-json", type=str, default=None)
-    parser.add_argument("--trust-remote-code", action="store_true")
-    parser.add_argument(
-        "--torch-dtype",
-        choices=["auto", "float16", "bfloat16", "float32"],
-        default="auto",
-    )
     return parser.parse_args()
