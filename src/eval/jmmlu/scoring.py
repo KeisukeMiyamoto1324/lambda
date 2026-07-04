@@ -1,6 +1,6 @@
-from src.eval.jmmlu.dataset import ANSWER_LABELS
-from src.eval.jmmlu.dataset import JmmluExample
-from src.eval.jmmlu.models import ChoiceScorer
+from src.eval.JMMLU.dataset import ANSWER_LABELS
+from src.eval.JMMLU.dataset import JmmluExample
+from src.eval.JMMLU.models import ChoiceScorer
 
 
 def build_prompt(example: JmmluExample) -> str:

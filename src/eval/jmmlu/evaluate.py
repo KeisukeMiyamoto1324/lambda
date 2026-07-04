@@ -8,8 +8,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.eval.jmmlu.cli import parse_args
-from src.eval.jmmlu.runtime import run_evaluation
+from src.eval.JMMLU.cli import parse_args
+from src.eval.JMMLU.runtime import run_evaluation
 
 
 def main() -> None:

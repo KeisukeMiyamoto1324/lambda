@@ -7,13 +7,13 @@ from pathlib import Path
 
 from rich.table import Table
 
-from src.eval.jmmlu.dataset import JMMLU_DATASET_ID
-from src.eval.jmmlu.dataset import JmmluExample
-from src.eval.jmmlu.dataset import download_jmmlu_archive
-from src.eval.jmmlu.dataset import load_examples
-from src.eval.jmmlu.models import ChoiceScorer
-from src.eval.jmmlu.models import load_choice_scorer
-from src.eval.jmmlu.scoring import predict_answer
+from src.eval.JMMLU.dataset import JMMLU_DATASET_ID
+from src.eval.JMMLU.dataset import JmmluExample
+from src.eval.JMMLU.dataset import download_jmmlu_archive
+from src.eval.JMMLU.dataset import load_examples
+from src.eval.JMMLU.models import ChoiceScorer
+from src.eval.JMMLU.models import load_choice_scorer
+from src.eval.JMMLU.scoring import predict_answer
 from src.shared.console import console
 from src.shared.console import progress_manager
 
