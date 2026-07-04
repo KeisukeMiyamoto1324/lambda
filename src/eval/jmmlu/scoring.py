@@ -1,6 +1,7 @@
 from src.eval.jmmlu.dataset import ANSWER_LABELS
 from src.eval.jmmlu.dataset import JmmluExample
 from src.eval.shared.models import ChoiceScorer
+from src.eval.shared.multiple_choice import MultipleChoicePrediction
 from src.eval.shared.multiple_choice import predict_choice
 
 
@@ -19,7 +20,7 @@ def build_prompt(example: JmmluExample) -> str:
     return f"Question: {example.question}\n{choices_text}\nAnswer:"
 
 
-def predict_answer(scorer: ChoiceScorer, example: JmmluExample) -> str:
+def predict_answer(scorer: ChoiceScorer, example: JmmluExample) -> MultipleChoicePrediction:
     # ---------------------------------------------------------
     # Score each answer label and choose the label with the
     # lowest language-model loss.

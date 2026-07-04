@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,10 +14,12 @@ from src.eval.jmmlu.scoring import predict_answer
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import load_choice_scorer
 from src.eval.shared.runtime import AccuracyResult
-from src.eval.shared.runtime import save_json_result
+from src.eval.shared.runtime import ExamplePrediction
+from src.eval.shared.runtime import build_output_dir
+from src.eval.shared.runtime import collect_predictions
+from src.eval.shared.runtime import save_evaluation_files
 from src.eval.shared.runtime import select_examples
 from src.shared.console import console
-from src.shared.console import progress_manager
 
 
 DEFAULT_OUTPUT_DIR = Path("eval_results/jmmlu")
@@ -37,6 +40,7 @@ class EvaluationResult:
     torch_dtype: str
     overall: SubjectResult
     by_subject: list[SubjectResult]
+    rows: list[ExamplePrediction[JmmluExample]]
 
 
 def run_evaluation(args: argparse.Namespace) -> None:
@@ -65,7 +69,13 @@ def run_evaluation(args: argparse.Namespace) -> None:
         examples=selected_examples,
     )
     render_result(result=result)
-    save_result(result=result, output_path=resolve_output_json(output_json=args.output_json))
+    output_dir = resolve_output_dir(output_dir=args.output_dir, model_source=args.model)
+    save_result(
+        result=result,
+        output_dir=output_dir,
+        limit=args.limit,
+        subjects=subjects,
+    )
 
 
 def evaluate_examples(
@@ -76,42 +86,28 @@ def evaluate_examples(
     # Evaluate all selected examples while tracking both overall
     # and per-subject accuracy counts.
     # ---------------------------------------------------------
-    subject_counts: dict[str, dict[str, int]] = {}
-    task_id = progress_manager.add_task(description="JMMLU", total=len(examples))
-
-    try:
-        for index, example in enumerate(examples, start=1):
-            prediction = predict_answer(
-                scorer=scorer,
-                example=example,
-            )
-            subject_count = subject_counts.setdefault(example.subject, {"correct": 0, "total": 0})
-            subject_count["correct"] += int(prediction == example.answer)
-            subject_count["total"] += 1
-
-            correct = sum(counts["correct"] for counts in subject_counts.values())
-            progress_manager.update(
-                task_id=task_id,
-                advance=1,
-                metrics=f"accuracy={correct / index:.4f}",
-            )
-    finally:
-        progress_manager.finish_task(task_id=task_id)
+    _, rows = collect_predictions(
+        scorer=scorer,
+        examples=examples,
+        benchmark_name="JMMLU",
+        predict_answer=predict_answer,
+    )
 
     return build_evaluation_result(
         scorer=scorer,
-        subject_counts=subject_counts,
+        rows=rows,
     )
 
 
 def build_evaluation_result(
     scorer: ChoiceScorer,
-    subject_counts: dict[str, dict[str, int]],
+    rows: list[ExamplePrediction[JmmluExample]],
 ) -> EvaluationResult:
     # ---------------------------------------------------------
     # Convert raw counters into serializable result dataclasses
     # for terminal rendering and JSON output.
     # ---------------------------------------------------------
+    subject_counts = build_subject_counts(rows=rows)
     by_subject = [
         SubjectResult(
             subject=subject,
@@ -138,7 +134,23 @@ def build_evaluation_result(
         torch_dtype=scorer.torch_dtype_name,
         overall=overall,
         by_subject=by_subject,
+        rows=rows,
     )
+
+
+def build_subject_counts(rows: list[ExamplePrediction[JmmluExample]]) -> dict[str, dict[str, int]]:
+    # ---------------------------------------------------------
+    # Count correct predictions per JMMLU subject for both the
+    # terminal table and config.json summary.
+    # ---------------------------------------------------------
+    subject_counts: dict[str, dict[str, int]] = {}
+
+    for row in rows:
+        subject_count = subject_counts.setdefault(row.example.subject, {"correct": 0, "total": 0})
+        subject_count["correct"] += int(row.correct)
+        subject_count["total"] += 1
+
+    return subject_counts
 
 
 def render_result(result: EvaluationResult) -> None:
@@ -170,21 +182,67 @@ def render_result(result: EvaluationResult) -> None:
     console.print(table)
 
 
-def resolve_output_json(output_json: str | None) -> Path:
+def resolve_output_dir(output_dir: str | None, model_source: str) -> Path:
     # ---------------------------------------------------------
-    # Use an explicit output path when provided. Otherwise, create
-    # a timestamped result file under eval_results.
+    # Use an explicit output directory when provided. Otherwise,
+    # create a timestamped directory under eval_results.
     # ---------------------------------------------------------
-    if output_json is not None:
-        return Path(output_json)
-
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return DEFAULT_OUTPUT_DIR / f"{timestamp}.json"
+    return build_output_dir(
+        base_dir=DEFAULT_OUTPUT_DIR,
+        output_dir=output_dir,
+        model_source=model_source,
+        timestamp=timestamp,
+    )
 
 
-def save_result(result: EvaluationResult, output_path: Path) -> None:
+def save_result(
+    result: EvaluationResult,
+    output_dir: Path,
+    limit: int | None,
+    subjects: list[str] | None,
+) -> None:
     # ---------------------------------------------------------
-    # Persist the evaluation summary as UTF-8 JSON for experiment
-    # tracking outside the terminal output.
+    # Persist summary config and all per-example rows for one
+    # evaluation run.
     # ---------------------------------------------------------
-    save_json_result(result=result, output_path=output_path)
+    config = {
+        "model_source": result.model_source,
+        "backend": result.backend,
+        "dataset": result.dataset,
+        "scoring_method": result.scoring_method,
+        "device": result.device,
+        "torch_dtype": result.torch_dtype,
+        "limit": limit,
+        "subjects": subjects,
+        "overall": asdict(result.overall),
+        "by_subject": [asdict(subject_result) for subject_result in result.by_subject],
+    }
+    rows = build_result_rows(rows=result.rows)
+    save_evaluation_files(config=config, rows=rows, output_dir=output_dir)
+
+
+def build_result_rows(rows: list[ExamplePrediction[JmmluExample]]) -> list[dict[str, object]]:
+    # ---------------------------------------------------------
+    # Convert JMMLU prediction records into CSV rows with question
+    # text, choices, answers, predictions, and losses.
+    # ---------------------------------------------------------
+    return [
+        {
+            "index": row.index,
+            "subject": row.example.subject,
+            "question": row.example.question,
+            "choice_A": row.example.choices[0],
+            "choice_B": row.example.choices[1],
+            "choice_C": row.example.choices[2],
+            "choice_D": row.example.choices[3],
+            "answer": row.example.answer,
+            "prediction": row.prediction,
+            "correct": row.correct,
+            "loss_A": row.losses[0],
+            "loss_B": row.losses[1],
+            "loss_C": row.losses[2],
+            "loss_D": row.losses[3],
+        }
+        for row in rows
+    ]

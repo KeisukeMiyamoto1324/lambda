@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import csv
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -94,7 +96,8 @@ class JCommonsenseQAEvalTest(unittest.TestCase):
         prediction = predict_answer(scorer=FakeChoiceScorer(), example=example)
 
         self.assertEqual(ANSWER_LABELS, ("0", "1", "2", "3", "4"))
-        self.assertEqual(prediction, "2")
+        self.assertEqual(prediction.prediction, "2")
+        self.assertEqual(prediction.losses, [1.0, 1.0, 0.0, 1.0, 1.0])
 
     def test_parse_args_defaults_to_validation_split(self) -> None:
         # ---------------------------------------------------------
@@ -106,10 +109,10 @@ class JCommonsenseQAEvalTest(unittest.TestCase):
         self.assertEqual(args.split, "validation")
         self.assertEqual(args.model, "Qwen/Qwen3-0.6B")
 
-    def test_evaluate_examples_and_save_result(self) -> None:
+    def test_evaluate_examples_and_save_result_files(self) -> None:
         # ---------------------------------------------------------
-        # Aggregate exact-match accuracy and write the result JSON
-        # to the requested path.
+        # Aggregate exact-match accuracy and write config plus all
+        # per-example CSV rows to the requested output directory.
         # ---------------------------------------------------------
         examples = [
             JCommonsenseQAExample(0, "q1", ["a", "b", "c", "d", "e"], "2"),
@@ -126,15 +129,22 @@ class JCommonsenseQAEvalTest(unittest.TestCase):
         self.assertEqual(result.overall.total, 2)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "nested" / "result.json"
+            output_dir = Path(temp_dir) / "nested" / "result"
             with patch("src.eval.jcommonsenseqa.runtime.console.print"):
-                save_result(result=result, output_path=output_path)
+                save_result(result=result, output_dir=output_dir, limit=None)
 
-            text = output_path.read_text(encoding="utf-8")
+            config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+            with (output_dir / "result.csv").open(encoding="utf-8", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
 
-        self.assertIn('"dataset": "sbintuitions/JCommonsenseQA"', text)
-        self.assertIn('"split": "validation"', text)
-        self.assertIn('"accuracy": 0.5', text)
+        self.assertEqual(config["dataset"], "sbintuitions/JCommonsenseQA")
+        self.assertEqual(config["split"], "validation")
+        self.assertEqual(config["overall"]["accuracy"], 0.5)
+        self.assertEqual(rows[0]["question"], "q1")
+        self.assertEqual(rows[0]["answer"], "2")
+        self.assertEqual(rows[0]["prediction"], "2")
+        self.assertEqual(rows[0]["correct"], "True")
+        self.assertEqual(rows[0]["loss_2"], "0.0")
 
 
 if __name__ == "__main__":

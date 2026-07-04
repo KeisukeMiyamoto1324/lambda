@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -11,8 +12,10 @@ from src.eval.jcommonsenseqa.scoring import predict_answer
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import load_choice_scorer
 from src.eval.shared.runtime import AccuracyResult
-from src.eval.shared.runtime import count_correct_predictions
-from src.eval.shared.runtime import save_json_result
+from src.eval.shared.runtime import ExamplePrediction
+from src.eval.shared.runtime import build_output_dir
+from src.eval.shared.runtime import collect_predictions
+from src.eval.shared.runtime import save_evaluation_files
 from src.eval.shared.runtime import select_examples
 from src.shared.console import console
 
@@ -31,6 +34,7 @@ class EvaluationResult:
     device: str
     torch_dtype: str
     overall: AccuracyResult
+    rows: list[ExamplePrediction[JCommonsenseQAExample]]
 
 
 def run_evaluation(args: argparse.Namespace) -> None:
@@ -57,7 +61,12 @@ def run_evaluation(args: argparse.Namespace) -> None:
         split=args.split,
     )
     render_result(result=result)
-    save_result(result=result, output_path=resolve_output_json(output_json=args.output_json))
+    output_dir = resolve_output_dir(output_dir=args.output_dir, model_source=args.model)
+    save_result(
+        result=result,
+        output_dir=output_dir,
+        limit=args.limit,
+    )
 
 
 def evaluate_examples(
@@ -69,7 +78,7 @@ def evaluate_examples(
     # Evaluate selected examples with shared exact-match logic and
     # return the benchmark-specific result shape.
     # ---------------------------------------------------------
-    overall = count_correct_predictions(
+    overall, rows = collect_predictions(
         scorer=scorer,
         examples=examples,
         benchmark_name="JCommonsenseQA",
@@ -80,6 +89,7 @@ def evaluate_examples(
         scorer=scorer,
         overall=overall,
         split=split,
+        rows=rows,
     )
 
 
@@ -87,6 +97,7 @@ def build_evaluation_result(
     scorer: ChoiceScorer,
     overall: AccuracyResult,
     split: str,
+    rows: list[ExamplePrediction[JCommonsenseQAExample]],
 ) -> EvaluationResult:
     # ---------------------------------------------------------
     # Convert raw counters into a serializable result dataclass
@@ -102,6 +113,7 @@ def build_evaluation_result(
         device=scorer.device_name,
         torch_dtype=scorer.torch_dtype_name,
         overall=overall,
+        rows=rows,
     )
 
 
@@ -119,21 +131,64 @@ def render_result(result: EvaluationResult) -> None:
     console.print(f"total: {result.overall.total}")
 
 
-def resolve_output_json(output_json: str | None) -> Path:
+def resolve_output_dir(output_dir: str | None, model_source: str) -> Path:
     # ---------------------------------------------------------
-    # Use an explicit output path when provided. Otherwise, create
-    # a timestamped result file under eval_results.
+    # Use an explicit output directory when provided. Otherwise,
+    # create a timestamped directory under eval_results.
     # ---------------------------------------------------------
-    if output_json is not None:
-        return Path(output_json)
-
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return DEFAULT_OUTPUT_DIR / f"{timestamp}.json"
+    return build_output_dir(
+        base_dir=DEFAULT_OUTPUT_DIR,
+        output_dir=output_dir,
+        model_source=model_source,
+        timestamp=timestamp,
+    )
 
 
-def save_result(result: EvaluationResult, output_path: Path) -> None:
+def save_result(result: EvaluationResult, output_dir: Path, limit: int | None) -> None:
     # ---------------------------------------------------------
-    # Persist the evaluation summary as UTF-8 JSON for experiment
-    # tracking outside the terminal output.
+    # Persist summary config and all per-example rows for one
+    # evaluation run.
     # ---------------------------------------------------------
-    save_json_result(result=result, output_path=output_path)
+    config = {
+        "model_source": result.model_source,
+        "backend": result.backend,
+        "dataset": result.dataset,
+        "config": result.config,
+        "split": result.split,
+        "scoring_method": result.scoring_method,
+        "device": result.device,
+        "torch_dtype": result.torch_dtype,
+        "limit": limit,
+        "overall": asdict(result.overall),
+    }
+    rows = build_result_rows(rows=result.rows)
+    save_evaluation_files(config=config, rows=rows, output_dir=output_dir)
+
+
+def build_result_rows(rows: list[ExamplePrediction[JCommonsenseQAExample]]) -> list[dict[str, object]]:
+    # ---------------------------------------------------------
+    # Convert JCommonsenseQA prediction records into CSV rows with
+    # question text, choices, answers, predictions, and losses.
+    # ---------------------------------------------------------
+    return [
+        {
+            "index": row.index,
+            "q_id": row.example.q_id,
+            "question": row.example.question,
+            "choice_0": row.example.choices[0],
+            "choice_1": row.example.choices[1],
+            "choice_2": row.example.choices[2],
+            "choice_3": row.example.choices[3],
+            "choice_4": row.example.choices[4],
+            "answer": row.example.answer,
+            "prediction": row.prediction,
+            "correct": row.correct,
+            "loss_0": row.losses[0],
+            "loss_1": row.losses[1],
+            "loss_2": row.losses[2],
+            "loss_3": row.losses[3],
+            "loss_4": row.losses[4],
+        }
+        for row in rows
+    ]

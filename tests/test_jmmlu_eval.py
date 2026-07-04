@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 import zipfile
+import csv
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -338,10 +340,10 @@ class JmmluEvalTest(unittest.TestCase):
         self.assertEqual(result.overall.accuracy, 0.5)
         self.assertEqual(result.by_subject[0].subject, "s1")
 
-    def test_save_result_writes_json(self) -> None:
+    def test_save_result_writes_config_and_csv(self) -> None:
         # ---------------------------------------------------------
-        # Save JSON summaries to the requested path and create
-        # missing parent directories.
+        # Save JSON config and per-example CSV rows to the
+        # requested output directory.
         # ---------------------------------------------------------
         scorer = NativeChoiceScorer(
             model=FakeModel(),
@@ -359,14 +361,27 @@ class JmmluEvalTest(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "nested" / "result.json"
+            output_dir = Path(temp_dir) / "nested" / "result"
             with patch("src.eval.jmmlu.runtime.console.print"):
-                save_result(result=result, output_path=output_path)
+                save_result(
+                    result=result,
+                    output_dir=output_dir,
+                    limit=None,
+                    subjects=None,
+                )
 
-            text = output_path.read_text(encoding="utf-8")
+            config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+            with (output_dir / "result.csv").open(encoding="utf-8", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
 
-        self.assertIn('"dataset": "nlp-waseda/JMMLU"', text)
-        self.assertIn('"accuracy": 1.0', text)
+        self.assertEqual(config["dataset"], "nlp-waseda/JMMLU")
+        self.assertEqual(config["overall"]["accuracy"], 1.0)
+        self.assertEqual(rows[0]["subject"], "s1")
+        self.assertEqual(rows[0]["question"], "q1")
+        self.assertEqual(rows[0]["answer"], "A")
+        self.assertEqual(rows[0]["prediction"], "A")
+        self.assertEqual(rows[0]["correct"], "True")
+        self.assertEqual(rows[0]["loss_A"], "0.0")
 
 
 if __name__ == "__main__":
