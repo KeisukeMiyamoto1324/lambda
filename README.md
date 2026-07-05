@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/banner.png" alt="Truly Open Japanese LLM development for everyone" width="100%">
-</p>
-
 # lambda
 
 A small decoder-only Transformer project built with PyTorch and Lightning.
