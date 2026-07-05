@@ -9,8 +9,8 @@ from src.eval.jcommonsenseqa.dataset import JCOMMONSENSEQA_DATASET_ID
 from src.eval.jcommonsenseqa.dataset import JCommonsenseQAExample
 from src.eval.jcommonsenseqa.dataset import load_examples
 from src.eval.jcommonsenseqa.scoring import predict_answer
-from src.eval.shared.models import ChoiceScorer
-from src.eval.shared.models import load_choice_scorer
+from src.eval.shared.scorer_loader import load_choice_scorer
+from src.eval.shared.scorer_types import ChoiceScorer
 from src.eval.shared.runtime import AccuracyResult
 from src.eval.shared.runtime import ExamplePrediction
 from src.eval.shared.runtime import build_output_dir

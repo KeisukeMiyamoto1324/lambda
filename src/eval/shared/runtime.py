@@ -7,7 +7,7 @@ from typing import Generic
 from typing import Protocol
 from typing import TypeVar
 
-from src.eval.shared.models import ChoiceScorer
+from src.eval.shared.scorer_types import ChoiceScorer
 from src.eval.shared.multiple_choice import MultipleChoicePrediction
 from src.shared.console import console
 from src.shared.console import progress_manager

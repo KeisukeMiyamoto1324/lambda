@@ -1,6 +1,6 @@
 from src.eval.jcommonsenseqa.dataset import ANSWER_LABELS
 from src.eval.jcommonsenseqa.dataset import JCommonsenseQAExample
-from src.eval.shared.models import ChoiceScorer
+from src.eval.shared.scorer_types import ChoiceScorer
 from src.eval.shared.multiple_choice import MultipleChoicePrediction
 from src.eval.shared.multiple_choice import predict_choice
 

@@ -10,9 +10,9 @@ from src.eval.jsquad_perplexity.dataset import JSQUAD_DATASET_ID
 from src.eval.jsquad_perplexity.dataset import JSQUAD_SPLIT
 from src.eval.jsquad_perplexity.dataset import JSQuADContext
 from src.eval.jsquad_perplexity.dataset import load_contexts
-from src.eval.shared.models import TextScore
-from src.eval.shared.models import TextScorer
-from src.eval.shared.models import load_choice_scorer
+from src.eval.shared.scorer_loader import load_choice_scorer
+from src.eval.shared.scorer_types import TextScore
+from src.eval.shared.scorer_types import TextScorer
 from src.eval.shared.runtime import build_output_dir
 from src.eval.shared.runtime import save_evaluation_files
 from src.eval.shared.runtime import select_examples

@@ -15,9 +15,9 @@ from src.eval.jsquad_perplexity.dataset import JSQuADContext
 from src.eval.jsquad_perplexity.dataset import load_contexts
 from src.eval.jsquad_perplexity.runtime import evaluate_contexts
 from src.eval.jsquad_perplexity.runtime import save_result
-from src.eval.shared.models import NativeChoiceScorer
-from src.eval.shared.models import TextScore
-from src.eval.shared.models import TransformersChoiceScorer
+from src.eval.shared.hf_scorer import TransformersChoiceScorer
+from src.eval.shared.native_scorer import NativeChoiceScorer
+from src.eval.shared.scorer_types import TextScore
 
 
 class FakeTextTokenizer:

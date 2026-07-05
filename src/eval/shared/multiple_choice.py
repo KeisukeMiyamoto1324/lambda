@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.eval.shared.models import ChoiceScorer
+from src.eval.shared.scorer_types import ChoiceScorer
 
 
 @dataclass(frozen=True)
