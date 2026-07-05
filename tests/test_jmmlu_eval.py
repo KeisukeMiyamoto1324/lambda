@@ -15,6 +15,7 @@ from src.eval.jmmlu.dataset import JmmluExample
 from src.eval.jmmlu.dataset import load_examples
 from src.eval.jmmlu.models import NativeChoiceScorer
 from src.eval.jmmlu.models import TransformersChoiceScorer
+from src.eval.jmmlu.models import build_continuation_labels
 from src.eval.jmmlu.models import build_hf_labels
 from src.eval.jmmlu.models import compute_row_losses
 from src.eval.jmmlu.models import resolve_backend
@@ -27,6 +28,13 @@ from src.eval.jmmlu.scoring import build_prompt
 class FakeTokenizer:
     pad_token = "|<pad>|"
     bos_token = "|<bos>|"
+
+    def __init__(self) -> None:
+        # ---------------------------------------------------------
+        # Expose a tokenizer-like object for offset-aware native
+        # continuation scoring tests.
+        # ---------------------------------------------------------
+        self.tokenizer = self
 
     def token_to_id(self, token: str) -> int:
         # ---------------------------------------------------------
@@ -44,6 +52,51 @@ class FakeTokenizer:
         # which label tokens are scored.
         # ---------------------------------------------------------
         return [ord(character) for character in sentence]
+
+    def encode(self, sentence: str) -> "FakeEncoding":
+        # ---------------------------------------------------------
+        # Return ids and character offsets like the tokenizer used
+        # by the native scoring path.
+        # ---------------------------------------------------------
+        return FakeEncoding(
+            ids=self.tokenize(sentence),
+            offsets=[(index, index + 1) for index in range(len(sentence))],
+        )
+
+
+class BoundaryMergingTokenizer(FakeTokenizer):
+    def encode(self, sentence: str) -> "FakeEncoding":
+        # ---------------------------------------------------------
+        # Merge the prompt-final colon and answer label into one
+        # token to verify boundary-aware label selection.
+        # ---------------------------------------------------------
+        if sentence.endswith(": A"):
+            prefix = sentence[:-3]
+            return FakeEncoding(
+                ids=[*[ord(character) for character in prefix], 90],
+                offsets=[
+                    *[(index, index + 1) for index in range(len(prefix))],
+                    (len(prefix), len(sentence)),
+                ],
+            )
+
+        if sentence.endswith(":A"):
+            prefix = sentence[:-2]
+            return FakeEncoding(
+                ids=[*[ord(character) for character in prefix], 90],
+                offsets=[
+                    *[(index, index + 1) for index in range(len(prefix))],
+                    (len(prefix), len(sentence)),
+                ],
+            )
+
+        return super().encode(sentence=sentence)
+
+
+class FakeEncoding:
+    def __init__(self, ids: list[int], offsets: list[tuple[int, int]]) -> None:
+        self.ids = ids
+        self.offsets = offsets
 
 
 class FakeModel(nn.Module):
@@ -73,13 +126,27 @@ class FakeTransformersTokenizer:
     pad_token_id = 0
     eos_token_id = 2
 
-    def __call__(self, text: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+    def __call__(
+        self,
+        text: str,
+        add_special_tokens: bool = True,
+        return_offsets_mapping: bool = False,
+    ) -> dict[str, list[int] | list[tuple[int, int]]]:
         # ---------------------------------------------------------
         # Encode characters into small ids for deterministic
         # Transformers scorer tests.
         # ---------------------------------------------------------
         prefix = [1] if add_special_tokens else []
-        return {"input_ids": [*prefix, *[ord(character) for character in text]]}
+        prefix_offsets = [(0, 0)] if add_special_tokens else []
+        encoded = {
+            "input_ids": [*prefix, *[ord(character) for character in text]],
+            "offset_mapping": [*prefix_offsets, *[(index, index + 1) for index in range(len(text))]],
+        }
+
+        if return_offsets_mapping:
+            return encoded
+
+        return {"input_ids": encoded["input_ids"]}
 
 
 class FakeTransformersOutput:
@@ -112,14 +179,72 @@ class BoundaryAwareTransformersTokenizer:
     pad_token_id = 0
     eos_token_id = 2
 
-    def __call__(self, text: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+    def __call__(
+        self,
+        text: str,
+        add_special_tokens: bool = True,
+        return_offsets_mapping: bool = False,
+    ) -> dict[str, list[int] | list[tuple[int, int]]]:
         # ---------------------------------------------------------
         # Encode standalone answer labels differently from labels
         # attached to a prompt, like boundary-sensitive tokenizers.
         # ---------------------------------------------------------
         prefix = [1] if add_special_tokens else []
+        prefix_offsets = [(0, 0)] if add_special_tokens else []
         offset = 20 if not add_special_tokens else 0
-        return {"input_ids": [*prefix, *[ord(character) + offset for character in text]]}
+        encoded = {
+            "input_ids": [*prefix, *[ord(character) + offset for character in text]],
+            "offset_mapping": [*prefix_offsets, *[(index, index + 1) for index in range(len(text))]],
+        }
+
+        if return_offsets_mapping:
+            return encoded
+
+        return {"input_ids": encoded["input_ids"]}
+
+
+class BoundaryMergingTransformersTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(
+        self,
+        text: str,
+        add_special_tokens: bool = True,
+        return_offsets_mapping: bool = False,
+    ) -> dict[str, list[int] | list[tuple[int, int]]]:
+        # ---------------------------------------------------------
+        # Merge the prompt-final colon and answer label into one
+        # token to verify offset-based label selection.
+        # ---------------------------------------------------------
+        prefix_ids = [1] if add_special_tokens else []
+        prefix_offsets = [(0, 0)] if add_special_tokens else []
+
+        if text.endswith(":A"):
+            body = text[:-2]
+            encoded = {
+                "input_ids": [*prefix_ids, *[ord(character) for character in body], 90],
+                "offset_mapping": [
+                    *prefix_offsets,
+                    *[(index, index + 1) for index in range(len(body))],
+                    (len(body), len(text)),
+                ],
+            }
+
+            if return_offsets_mapping:
+                return encoded
+
+            return {"input_ids": encoded["input_ids"]}
+
+        encoded = {
+            "input_ids": [*prefix_ids, *[ord(character) for character in text]],
+            "offset_mapping": [*prefix_offsets, *[(index, index + 1) for index in range(len(text))]],
+        }
+
+        if return_offsets_mapping:
+            return encoded
+
+        return {"input_ids": encoded["input_ids"]}
 
 
 class BoundaryAwareTransformersModel(nn.Module):
@@ -252,12 +377,30 @@ class JmmluEvalTest(unittest.TestCase):
         # ---------------------------------------------------------
         labels = build_hf_labels(
             full_token_ids=[[1, 10, 20, 30], [1, 10, 21]],
-            prompt_len=2,
+            offset_rows=[
+                [(0, 0), (0, 1), (1, 2), (2, 3)],
+                [(0, 0), (0, 1), (1, 2)],
+            ],
+            prompt_text_len=1,
             max_len=4,
-            pad_token_id=0,
         )
 
         self.assertEqual(labels, [[-100, 20, 30, -100], [-100, 21, -100, -100]])
+
+    def test_build_continuation_labels_scores_boundary_merged_token(self) -> None:
+        # ---------------------------------------------------------
+        # Score a token that starts inside the prompt but reaches
+        # the continuation text.
+        # ---------------------------------------------------------
+        labels = build_continuation_labels(
+            token_ids=[1, 10, 90],
+            offsets=[(0, 0), (0, 1), (1, 3)],
+            prompt_text_len=2,
+            max_len=2,
+            ignored_token_id=-100,
+        )
+
+        self.assertEqual(labels, [-100, 90])
 
     def test_compute_row_losses_returns_per_choice_losses(self) -> None:
         # ---------------------------------------------------------
@@ -307,6 +450,44 @@ class JmmluEvalTest(unittest.TestCase):
         losses = scorer.score_continuations(prompt="Question: test\nAnswer:", continuations=("A", "B"))
 
         self.assertLess(losses[0], losses[1])
+
+    def test_transformers_choice_scorer_scores_boundary_merged_token(self) -> None:
+        # ---------------------------------------------------------
+        # Keep a merged prompt-answer boundary token visible to the
+        # loss instead of masking it as prompt text.
+        # ---------------------------------------------------------
+        scorer = TransformersChoiceScorer(
+            model=FakeTransformersModel(),
+            tokenizer=BoundaryMergingTransformersTokenizer(),
+            device=torch.device("cpu"),
+            model_source="fake/hf",
+            torch_dtype_name="auto",
+        )
+
+        losses = scorer.score_continuations(prompt="Question:", continuations=("A",))
+
+        self.assertGreater(losses[0], 0.0)
+
+    def test_native_choice_scorer_scores_boundary_merged_token(self) -> None:
+        # ---------------------------------------------------------
+        # Keep a merged prompt-answer boundary token visible in the
+        # native scoring path too.
+        # ---------------------------------------------------------
+        model = FakeModel()
+        tokenizer = BoundaryMergingTokenizer()
+
+        score_native_answer_label(
+            model=model,
+            tokenizer=tokenizer,
+            prompt="Question:",
+            answer_label="A",
+            device=torch.device("cpu"),
+            pad_token_id=0,
+            bos_token_id=1,
+            max_seq_len=128,
+        )
+
+        self.assertEqual(model.labels[-1][-1], 90)
 
     def test_evaluate_examples_returns_overall_and_subject_accuracy(self) -> None:
         # ---------------------------------------------------------

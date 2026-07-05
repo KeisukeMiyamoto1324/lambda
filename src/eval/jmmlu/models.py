@@ -1,6 +1,7 @@
 from src.eval.shared.models import ChoiceScorer
 from src.eval.shared.models import NativeChoiceScorer
 from src.eval.shared.models import TransformersChoiceScorer
+from src.eval.shared.models import build_continuation_labels
 from src.eval.shared.models import build_hf_labels
 from src.eval.shared.models import compute_row_losses
 from src.eval.shared.models import load_choice_scorer
@@ -13,6 +14,7 @@ __all__ = [
     "ChoiceScorer",
     "NativeChoiceScorer",
     "TransformersChoiceScorer",
+    "build_continuation_labels",
     "build_hf_labels",
     "compute_row_losses",
     "load_choice_scorer",

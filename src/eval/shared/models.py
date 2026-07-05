@@ -114,18 +114,12 @@ class TransformersChoiceScorer:
         # Tokenize each full prompt plus continuation because some
         # tokenizers produce different suffix ids at the boundary.
         # ---------------------------------------------------------
-        encoded_prompt = self.tokenizer(prompt, add_special_tokens=True)
-        prompt_ids = [int(token_id) for token_id in encoded_prompt["input_ids"]]
-        full_token_ids = [
-            [
-                int(token_id)
-                for token_id in self.tokenizer(
-                    f"{prompt}{continuation}",
-                    add_special_tokens=True,
-                )["input_ids"]
-            ]
+        encoded_rows = [
+            encode_hf_text(tokenizer=self.tokenizer, text=f"{prompt}{continuation}")
             for continuation in continuations
         ]
+        full_token_ids = [token_ids for token_ids, _ in encoded_rows]
+        offset_rows = [offsets for _, offsets in encoded_rows]
         max_len = max(len(token_ids) for token_ids in full_token_ids)
         pad_token_id = resolve_hf_pad_token_id(tokenizer=self.tokenizer)
         input_rows = [
@@ -134,9 +128,9 @@ class TransformersChoiceScorer:
         ]
         labels = build_hf_labels(
             full_token_ids=full_token_ids,
-            prompt_len=len(prompt_ids),
+            offset_rows=offset_rows,
+            prompt_text_len=len(prompt),
             max_len=max_len,
-            pad_token_id=pad_token_id,
         )
 
         input_ids = torch.tensor(input_rows, dtype=torch.long, device=self.device)
@@ -302,18 +296,21 @@ def score_native_continuation(
     # Tokenize the full text so boundary-sensitive tokenizers use
     # the same ids as real generation.
     # ---------------------------------------------------------
-    prompt_token_ids = [bos_token_id, *tokenizer.tokenize(prompt)]
-    full_token_ids = [bos_token_id, *tokenizer.tokenize(f"{prompt}{continuation}")]
+    encoding = tokenizer.tokenizer.encode(f"{prompt}{continuation}")
+    full_token_ids = [bos_token_id, *[int(token_id) for token_id in encoding.ids]]
+    offset_row = [(0, 0), *[(int(start), int(end)) for start, end in encoding.offsets]]
     input_token_ids = full_token_ids[:-1]
 
     if len(input_token_ids) > max_seq_len:
         raise ValueError(f"Evaluation prompt is longer than model context: {len(input_token_ids)} > {max_seq_len}")
 
-    label_token_ids = [pad_token_id for _ in input_token_ids]
-    continuation_start_index = len(prompt_token_ids)
-
-    for full_index in range(continuation_start_index, len(full_token_ids)):
-        label_token_ids[full_index - 1] = full_token_ids[full_index]
+    label_token_ids = build_continuation_labels(
+        token_ids=full_token_ids,
+        offsets=offset_row,
+        prompt_text_len=len(prompt),
+        max_len=len(input_token_ids),
+        ignored_token_id=pad_token_id,
+    )
 
     input_tokens = torch.tensor([input_token_ids], dtype=torch.long, device=device)
     labels = torch.tensor([label_token_ids], dtype=torch.long, device=device)
@@ -521,28 +518,57 @@ def pad_token_row(token_ids: list[int], max_len: int, pad_token_id: int) -> list
     return [*token_ids, *[pad_token_id for _ in range(max_len - len(token_ids))]]
 
 
-def build_hf_labels(
-    full_token_ids: list[list[int]],
-    prompt_len: int,
+def encode_hf_text(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
+    # ---------------------------------------------------------
+    # Keep token ids and source text ranges from the same full
+    # encoding so boundary merges are handled correctly.
+    # ---------------------------------------------------------
+    encoded = tokenizer(text, add_special_tokens=True, return_offsets_mapping=True)
+    token_ids = [int(token_id) for token_id in encoded["input_ids"]]
+    offsets = [(int(start), int(end)) for start, end in encoded["offset_mapping"]]
+    return token_ids, offsets
+
+
+def build_continuation_labels(
+    token_ids: list[int],
+    offsets: list[tuple[int, int]],
+    prompt_text_len: int,
     max_len: int,
-    pad_token_id: int,
-) -> list[list[int]]:
+    ignored_token_id: int,
+) -> list[int]:
     # ---------------------------------------------------------
-    # Build labels aligned for causal LM shifting. Prompt and pad
-    # positions are ignored with -100.
+    # Score tokens whose source text reaches the continuation.
+    # This also scores tokens merged across the prompt boundary.
     # ---------------------------------------------------------
-    label_rows: list[list[int]] = []
+    labels = [ignored_token_id for _ in range(max_len)]
 
-    for token_ids in full_token_ids:
-        padded_token_ids = pad_token_row(token_ids=token_ids, max_len=max_len, pad_token_id=pad_token_id)
-        labels = [-100 for _ in padded_token_ids]
-
-        for full_index in range(prompt_len, len(token_ids)):
+    for full_index in range(1, len(token_ids)):
+        if offsets[full_index][1] > prompt_text_len:
             labels[full_index - 1] = token_ids[full_index]
 
-        label_rows.append(labels)
+    return labels
 
-    return label_rows
+
+def build_hf_labels(
+    full_token_ids: list[list[int]],
+    offset_rows: list[list[tuple[int, int]]],
+    prompt_text_len: int,
+    max_len: int,
+) -> list[list[int]]:
+    # ---------------------------------------------------------
+    # Build labels aligned for causal LM shifting. Prompt-only
+    # and pad positions are ignored with -100.
+    # ---------------------------------------------------------
+    return [
+        build_continuation_labels(
+            token_ids=token_ids,
+            offsets=offsets,
+            prompt_text_len=prompt_text_len,
+            max_len=max_len,
+            ignored_token_id=-100,
+        )
+        for token_ids, offsets in zip(full_token_ids, offset_rows, strict=True)
+    ]
 
 
 def compute_row_losses(logits: torch.Tensor, labels: torch.Tensor) -> list[float]:
