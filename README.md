@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Truly Open Japanese LLM development for everyone" width="100%">
+  <img src="assets/banner1.png" alt="Truly Open Japanese LLM development" width="100%">
 </p>
 
 # lambda
