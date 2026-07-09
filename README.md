@@ -20,7 +20,7 @@ pip3 install -r requirements.txt
 python3 src/tokenizer/train.py
 python3 src/pretraining/train.py
 python3 src/midtraining/train.py --model-path "models/lambda-160m"
-python3 src/inference_base/inference.py --prompt "人工知能とは"
+python3 src/inference_base/inference.py --model-dir "models/lambda-160m-midtrained" --prompt "人工知能とは"
 ```
 
 ## Test
