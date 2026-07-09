@@ -19,8 +19,8 @@ pip3 install -r requirements.txt
 ```bash
 python3 src/tokenizer/train.py
 python3 src/pretraining/train.py
-python3 src/midtraining/train.py --model-path "model file path"
-python3 src/inference_base/inference.py --prompt "Hello"
+python3 src/midtraining/train.py --model-path "models/lambda-160m"
+python3 src/inference_base/inference.py --prompt "人工知能とは"
 ```
 
 ## Test
