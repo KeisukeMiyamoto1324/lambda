@@ -1,7 +1,7 @@
 import argparse
 
-from src.inference_base.generation import generate_continuation_text
 from src.inference_base.generation import resolve_torch_dtype
+from src.inference_base.generation import stream_continuation_text
 from src.shared.console import console
 from src.shared.device_utils import resolve_device
 from src.shared.pytorch_artifacts import load_pytorch_model
@@ -39,10 +39,12 @@ def run_inference(args: argparse.Namespace) -> None:
         user_text = input("user> ").strip()
 
     # ---------------------------------------------------------
-    # Generate a continuation using the native PyTorch generation
-    # settings parsed by the inference CLI.
+    # Stream generated text to the terminal as soon as each token
+    # produces a readable decoded chunk.
     # ---------------------------------------------------------
-    generated_text = generate_continuation_text(
+    console.print("[bold cyan]model>[/bold cyan] ", end="")
+
+    for chunk in stream_continuation_text(
         model=model,
         tokenizer=tokenizer,
         prompt=user_text,
@@ -53,5 +55,7 @@ def run_inference(args: argparse.Namespace) -> None:
         top_k=args.top_k,
         repetition_penalty=args.repetition_penalty,
         no_repeat_ngram_size=args.no_repeat_ngram_size,
-    )
-    console.print(f"[bold cyan]model>[/bold cyan] {generated_text}")
+    ):
+        console.print(chunk, end="", markup=False, highlight=False)
+
+    console.print()

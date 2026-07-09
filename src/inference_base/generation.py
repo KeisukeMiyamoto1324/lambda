@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import torch
 
 from src.shared.model.kv_cache import KeyValueCache
@@ -190,8 +192,40 @@ def generate_continuation_text(
     no_repeat_ngram_size: int,
 ) -> str:
     # ---------------------------------------------------------
-    # Tokenize the prompt with BOS and decode only newly generated
-    # token ids from the PyTorch generation loop.
+    # Keep non-streaming callers on the same generation path by
+    # collecting streamed chunks into one final continuation.
+    # ---------------------------------------------------------
+    return "".join(
+        stream_continuation_text(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+        )
+    ).strip()
+
+
+def stream_continuation_text(
+    model: DecoderOnlyTransformer,
+    tokenizer: ByteLevelBPE,
+    prompt: str,
+    max_new_tokens: int,
+    do_sample: bool,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    repetition_penalty: float,
+    no_repeat_ngram_size: int,
+) -> Iterator[str]:
+    # ---------------------------------------------------------
+    # Tokenize the prompt once, then stream only newly decoded
+    # text as each generated token becomes available.
     # ---------------------------------------------------------
     bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
     eos_token_id = tokenizer.token_to_id(tokenizer.eos_token)
@@ -202,18 +236,47 @@ def generate_continuation_text(
         device=next(model.parameters()).device,
     )
 
-    with torch.no_grad():
-        generated_ids = generate_token_ids(
-            model=model,
-            input_ids=input_ids,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            repetition_penalty=repetition_penalty,
-            no_repeat_ngram_size=no_repeat_ngram_size,
-            eos_token_id=eos_token_id,
-        )
+    generated_ids = [int(token_id) for token_id in input_ids[0].tolist()]
+    new_token_ids: list[int] = []
+    past_key_values: KeyValueCache | None = None
+    current_input_ids = input_ids
+    streamed_text = ""
 
-    return tokenizer.detokenize(generated_ids).strip()
+    # ---------------------------------------------------------
+    # Decode the whole generated suffix each step and yield only
+    # the new tail so byte-level tokens stay readable.
+    # ---------------------------------------------------------
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
+            logits, past_key_values = model.forward_with_cache(
+                token_ids=current_input_ids,
+                past_key_values=past_key_values,
+            )
+            next_token_id = select_next_token(
+                logits=logits[0, -1, :],
+                generated_ids=generated_ids,
+                do_sample=do_sample,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+            )
+            generated_ids.append(next_token_id)
+
+            if next_token_id == eos_token_id:
+                return
+
+            new_token_ids.append(next_token_id)
+            decoded_text = tokenizer.detokenize(new_token_ids)
+            chunk = decoded_text[len(streamed_text) :]
+            streamed_text = decoded_text
+
+            if chunk:
+                yield chunk
+
+            current_input_ids = torch.tensor(
+                [[next_token_id]],
+                dtype=torch.long,
+                device=input_ids.device,
+            )
