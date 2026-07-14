@@ -1,5 +1,9 @@
+from collections.abc import Iterator
+
+import torch
 from datasets import load_dataset
-from torch.utils.data import Dataset
+from datasets.distributed import split_dataset_by_node
+from torch.utils.data import IterableDataset
 
 from src.posttraining.chat_template import ChatMessage
 from src.posttraining.chat_template import tokenize_chat_messages
@@ -13,7 +17,7 @@ LAMBDA_CHAT_TRAIN_SPLIT = "train"
 LAMBDA_CHAT_VALIDATION_SPLIT = "validation"
 
 
-class LambdaChatDataset(Dataset[PackedTrainingExample]):
+class LambdaChatDataset(IterableDataset[PackedTrainingExample]):
     def __init__(
         self,
         tokenizer: ByteLevelBPE,
@@ -23,37 +27,95 @@ class LambdaChatDataset(Dataset[PackedTrainingExample]):
         bos_token_id: int,
         eos_token_id: int,
         end_of_turn_token_id: int,
+        shuffle_buffer_size: int = 0,
+        shuffle_seed: int = 0,
+        repeat_forever: bool = False,
     ) -> None:
         super().__init__()
 
         # ---------------------------------------------------------
-        # Load lambda-chat records locally and prepare the shared
-        # deterministic packer for the selected dataset split.
+        # Keep only the settings needed to stream, tokenize, and pack
+        # lambda-chat records inside DataLoader workers.
         # ---------------------------------------------------------
-        dataset = load_dataset(path=LAMBDA_CHAT_DATASET_PATH, split=split)
-        packer = BucketSequencePacker(
-            max_len=max_len,
-            pad_token_id=pad_token_id,
-            source_name=f"{LAMBDA_CHAT_DATASET_PATH}:{split}",
+        self.tokenizer = tokenizer
+        self.split = split
+        self.max_len = max_len
+        self.pad_token_id = pad_token_id
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+        self.end_of_turn_token_id = end_of_turn_token_id
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.shuffle_seed = shuffle_seed
+        self.repeat_forever = repeat_forever
+
+    def __iter__(self) -> Iterator[PackedTrainingExample]:
+        # ---------------------------------------------------------
+        # Repeat independently shuffled streaming passes until the
+        # trainer reaches its configured maximum step count.
+        # ---------------------------------------------------------
+        pass_index = 0
+
+        while True:
+            yield from self._iter_split_pass(pass_index=pass_index)
+            pass_index += 1
+
+            if not self.repeat_forever:
+                break
+
+    def _iter_split_pass(self, pass_index: int) -> Iterator[PackedTrainingExample]:
+        # ---------------------------------------------------------
+        # Open only the requested split as a stream so startup does
+        # not tokenize or retain the full dataset in memory.
+        # ---------------------------------------------------------
+        dataset = load_dataset(
+            path=LAMBDA_CHAT_DATASET_PATH,
+            split=self.split,
+            streaming=True,
         )
-        self.examples: list[PackedTrainingExample] = []
+        dataset = dataset.select_columns(["messages"])
+        dataset = dataset.reshard()
+
+        if self.shuffle_buffer_size > 0:
+            dataset = dataset.shuffle(
+                seed=self.shuffle_seed + pass_index,
+                buffer_size=self.shuffle_buffer_size,
+            )
 
         # ---------------------------------------------------------
-        # Tokenize every conversation without padding and add it to
-        # the bounded best-fit window used by pretraining.
+        # Keep CUDA ranks on separate stream partitions. Hugging Face
+        # handles DataLoader worker partitioning inside each rank.
+        # ---------------------------------------------------------
+        rank_count, rank_index = self._resolve_rank_partition()
+
+        if rank_count > 1:
+            dataset = split_dataset_by_node(
+                dataset,
+                rank=rank_index,
+                world_size=rank_count,
+            )
+
+        packer = BucketSequencePacker(
+            max_len=self.max_len,
+            pad_token_id=self.pad_token_id,
+            source_name=f"{LAMBDA_CHAT_DATASET_PATH}:{self.split}",
+        )
+
+        # ---------------------------------------------------------
+        # Tokenize conversations as they arrive and emit packed fixed
+        # length examples from the bounded packing buffer.
         # ---------------------------------------------------------
         for sample in dataset:
             input_token_ids, label_token_ids = build_chat_segment(
-                tokenizer=tokenizer,
+                tokenizer=self.tokenizer,
                 messages=[
                     ChatMessage(role=message["role"], content=message["content"])
                     for message in sample["messages"]
                 ],
-                max_len=max_len,
-                pad_token_id=pad_token_id,
-                bos_token_id=bos_token_id,
-                eos_token_id=eos_token_id,
-                end_of_turn_token_id=end_of_turn_token_id,
+                max_len=self.max_len,
+                pad_token_id=self.pad_token_id,
+                bos_token_id=self.bos_token_id,
+                eos_token_id=self.eos_token_id,
+                end_of_turn_token_id=self.end_of_turn_token_id,
             )
             packed_example = packer.add_segment(
                 input_token_ids=input_token_ids,
@@ -61,27 +123,19 @@ class LambdaChatDataset(Dataset[PackedTrainingExample]):
             )
 
             if packed_example is not None:
-                self.examples.append(packed_example)
+                yield packed_example
 
-        # ---------------------------------------------------------
-        # Materialize the remaining packed sequences so DataLoader
-        # length and repeat-epoch step counts are exact.
-        # ---------------------------------------------------------
-        self.examples.extend(packer.drain())
+        yield from packer.drain()
 
-    def __len__(self) -> int:
+    def _resolve_rank_partition(self) -> tuple[int, int]:
         # ---------------------------------------------------------
-        # Return the number of packed lambda-chat sequences available
-        # from the selected split.
+        # Read distributed state only when iteration begins because
+        # Lightning initializes CUDA ranks after DataLoader creation.
         # ---------------------------------------------------------
-        return len(self.examples)
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return 1, 0
 
-    def __getitem__(self, index: int) -> PackedTrainingExample:
-        # ---------------------------------------------------------
-        # Return one fixed-length packed chat example without any
-        # additional network, tokenizer, or packing work.
-        # ---------------------------------------------------------
-        return self.examples[index]
+        return torch.distributed.get_world_size(), torch.distributed.get_rank()
 
 
 def build_chat_segment(

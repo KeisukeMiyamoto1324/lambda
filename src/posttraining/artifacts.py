@@ -51,8 +51,7 @@ def save_chat_model(
             getattr(args, "batch_size", 1),
         ),
         "lr_schedule": "warmup_cosine",
-        "lr_warmup_epochs": args.lr_warmup_epochs,
-        "lr_warmup_steps": args.posttraining_warmup_steps,
+        "lr_warmup_steps": args.lr_warmup_steps,
         "min_learning_rate": args.min_learning_rate,
         "min_learning_rate_ratio": args.min_learning_rate_ratio,
         "loss_chunk_size": args.loss_chunk_size,
@@ -62,7 +61,8 @@ def save_chat_model(
             f"{LAMBDA_CHAT_DATASET_PATH}:{LAMBDA_CHAT_TRAIN_SPLIT}",
         ],
         "validation_dataset": f"{LAMBDA_CHAT_DATASET_PATH}:{LAMBDA_CHAT_VALIDATION_SPLIT}",
-        "repeat_epochs": args.repeat_epochs,
+        "validation_cache_path": args.validation_cache_path,
+        "validation_sample_count": args.validation_sample_count,
         "posttraining_steps": args.posttraining_steps,
     }
 

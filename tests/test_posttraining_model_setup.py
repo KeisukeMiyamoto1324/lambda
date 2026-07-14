@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Iterator
 import io
 import json
 from pathlib import Path
@@ -91,6 +92,43 @@ class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.
         return tensor, tensor, tensor, tensor
 
 
+class FakeStreamingDataset:
+    def __init__(self, samples: list[dict[str, object]]) -> None:
+        # ---------------------------------------------------------
+        # Keep chat records behind the small subset of Hugging Face
+        # streaming methods used by LambdaChatDataset.
+        # ---------------------------------------------------------
+        self.samples = samples
+
+    def select_columns(self, column_names: list[str]) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Preserve records because tests already provide only the
+        # message column consumed by the stream.
+        # ---------------------------------------------------------
+        del column_names
+        return self
+
+    def reshard(self) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Return the same local stream without remote shard changes.
+        # ---------------------------------------------------------
+        return self
+
+    def shuffle(self, seed: int, buffer_size: int) -> "FakeStreamingDataset":
+        # ---------------------------------------------------------
+        # Accept stream shuffle settings while keeping test order
+        # deterministic and easy to assert.
+        # ---------------------------------------------------------
+        del seed, buffer_size
+        return self
+
+    def __iter__(self) -> Iterator[dict[str, object]]:
+        # ---------------------------------------------------------
+        # Yield the configured records through the streaming API.
+        # ---------------------------------------------------------
+        yield from self.samples
+
+
 class PosttrainingModelSetupTest(unittest.TestCase):
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
@@ -100,12 +138,12 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         invalid_cases = [
             ("--max-len", "0"),
             ("--learning-rate", "0"),
-            ("--lr-warmup-epochs", "-1"),
-            ("--lr-warmup-epochs", "3"),
+            ("--lr-warmup-steps", "-1"),
+            ("--lr-warmup-steps", "1024"),
             ("--min-learning-rate-ratio", "1.1"),
             ("--batch-size", "0"),
             ("--gradient-accumulation-steps", "0"),
-            ("--repeat-epochs", "0"),
+            ("--max-steps", "0"),
             ("--num-workers", "-1"),
             ("--val-batches", "0"),
             ("--val-check-interval", "0"),
@@ -258,7 +296,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 max_len=8,
                 learning_rate=5e-5,
                 base_model_id=DEFAULT_BASE_MODEL_ID,
-                repeat_epochs=3,
                 posttraining_steps=9,
                 devices="auto",
                 device_count=1,
@@ -266,11 +303,12 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 global_effective_batch_size=32,
                 batch_size=16,
                 gradient_accumulation_steps=2,
-                lr_warmup_epochs=0.2,
-                posttraining_warmup_steps=2,
+                lr_warmup_steps=2,
                 min_learning_rate=1e-5,
                 min_learning_rate_ratio=0.2,
                 loss_chunk_size=8,
+                validation_cache_path="validation.pt",
+                validation_sample_count=128,
             )
             model_config = {
                 "max_len": 16,
@@ -303,7 +341,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["trainable_layers"], "all")
         self.assertEqual(payload["posttraining_datasets"], ["KeisukeMiyamoto/lambda-chat:train"])
         self.assertEqual(payload["validation_dataset"], "KeisukeMiyamoto/lambda-chat:validation")
-        self.assertEqual(payload["repeat_epochs"], 3)
         self.assertEqual(payload["posttraining_steps"], 9)
         self.assertEqual(payload["devices"], "auto")
         self.assertEqual(payload["device_count"], 1)
@@ -312,8 +349,9 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["global_effective_batch_size"], 32)
         self.assertEqual(payload["gradient_accumulation_steps"], 2)
         self.assertEqual(payload["lr_schedule"], "warmup_cosine")
-        self.assertEqual(payload["lr_warmup_epochs"], 0.2)
         self.assertEqual(payload["lr_warmup_steps"], 2)
+        self.assertEqual(payload["validation_cache_path"], "validation.pt")
+        self.assertEqual(payload["validation_sample_count"], 128)
         self.assertEqual(payload["loss_chunk_size"], 8)
         self.assertTrue(model_path_exists)
 
@@ -330,7 +368,9 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ],
         }
 
-        with patch("src.posttraining.dataset.load_dataset", return_value=[sample]) as mocked_load:
+        stream = FakeStreamingDataset(samples=[sample])
+
+        with patch("src.posttraining.dataset.load_dataset", return_value=stream) as mocked_load:
             with patch(
                 "src.posttraining.dataset.build_chat_segment",
                 return_value=([1], [2]),
@@ -344,10 +384,15 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     eos_token_id=2,
                     end_of_turn_token_id=3,
                 )
+                examples = list(dataset)
 
         messages = mocked_build.call_args.kwargs["messages"]
-        mocked_load.assert_called_once_with(path="KeisukeMiyamoto/lambda-chat", split="train")
-        self.assertEqual(len(dataset), 1)
+        mocked_load.assert_called_once_with(
+            path="KeisukeMiyamoto/lambda-chat",
+            split="train",
+            streaming=True,
+        )
+        self.assertEqual(len(examples), 1)
         self.assertEqual(messages[0].role, "user")
         self.assertEqual(messages[0].content, "質問")
         self.assertEqual(messages[1].role, "assistant")
@@ -407,7 +452,9 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ([1, 30, 31], [0, 30, 31]),
         ]
 
-        with patch("src.posttraining.dataset.load_dataset", return_value=samples):
+        stream = FakeStreamingDataset(samples=samples)
+
+        with patch("src.posttraining.dataset.load_dataset", return_value=stream):
             with patch("src.posttraining.dataset.build_chat_segment", side_effect=segments):
                 dataset = LambdaChatDataset(
                     tokenizer=FakeTokenizer(),
@@ -418,10 +465,11 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     eos_token_id=2,
                     end_of_turn_token_id=3,
                 )
+                examples = list(dataset)
 
-        input_ids, labels, position_ids, segment_ids = dataset[0]
-        remaining_input_ids, _, remaining_position_ids, remaining_segment_ids = dataset[1]
-        self.assertEqual(len(dataset), 2)
+        input_ids, labels, position_ids, segment_ids = examples[0]
+        remaining_input_ids, _, remaining_position_ids, remaining_segment_ids = examples[1]
+        self.assertEqual(len(examples), 2)
         self.assertEqual(input_ids.tolist(), [1, 10, 11, 12, 1, 20])
         self.assertEqual(labels.tolist(), [0, 10, 11, 12, 0, 20])
         self.assertEqual(position_ids.tolist(), [0, 1, 2, 3, 0, 1])
@@ -430,65 +478,38 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(remaining_position_ids.tolist(), [0, 1, 2, 0, 0, 0])
         self.assertEqual(remaining_segment_ids.tolist(), [0, 0, 0, -1, -1, -1])
 
-    def test_build_dataloaders_computes_three_epoch_steps(self) -> None:
+    def test_build_dataloaders_uses_stream_and_validation_cache(self) -> None:
         # ---------------------------------------------------------
-        # Derive Lightning max_steps from dataloader length times
-        # repeat epochs so batch size changes keep epoch semantics.
+        # Keep training iterable while loading fixed validation
+        # tensors from an existing local cache.
         # ---------------------------------------------------------
-        fake_datasets = [FakeDataset(size=5), FakeDataset(size=2)]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "validation.pt"
+            cache_path.touch()
+            fake_datasets = [FakeDataset(size=5), FakeDataset(size=2)]
 
-        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
-            _, _, max_steps = build_dataloaders(
-                tokenizer=FakeTokenizer(),
-                max_len=8,
-                batch_size=2,
-                num_workers=0,
-                accelerator="cpu",
-                repeat_epochs=3,
-            )
+            with patch(
+                "src.posttraining.dataloaders.LambdaChatDataset",
+                side_effect=fake_datasets,
+            ) as mocked_stream, patch(
+                "src.posttraining.dataloaders.LocalTokenizedDataset",
+                return_value=FakeDataset(size=2),
+            ) as mocked_cache:
+                train_dataloader, validation_dataloader = build_dataloaders(
+                    tokenizer=FakeTokenizer(),
+                    max_len=8,
+                    batch_size=2,
+                    num_workers=0,
+                    accelerator="cpu",
+                    validation_cache_path=cache_path,
+                    validation_sample_count=2,
+                    shuffle_seed=17,
+                )
 
-        self.assertEqual(max_steps, 9)
-
-    def test_build_dataloaders_computes_multi_gpu_epoch_steps(self) -> None:
-        # ---------------------------------------------------------
-        # Keep repeat_epochs tied to full dataset passes when each
-        # optimizer step consumes batches from multiple GPUs.
-        # ---------------------------------------------------------
-        fake_datasets = [FakeDataset(size=5), FakeDataset(size=2)]
-
-        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
-            _, _, max_steps = build_dataloaders(
-                tokenizer=FakeTokenizer(),
-                max_len=8,
-                batch_size=2,
-                num_workers=0,
-                accelerator="cpu",
-                repeat_epochs=3,
-                device_count=2,
-            )
-
-        self.assertEqual(max_steps, 6)
-
-    def test_build_dataloaders_accounts_for_gradient_accumulation(self) -> None:
-        # ---------------------------------------------------------
-        # Keep repeat epochs tied to samples processed when several
-        # batches contribute to one optimizer step.
-        # ---------------------------------------------------------
-        fake_datasets = [FakeDataset(size=17), FakeDataset(size=2)]
-
-        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
-            _, _, max_steps = build_dataloaders(
-                tokenizer=FakeTokenizer(),
-                max_len=8,
-                batch_size=2,
-                num_workers=0,
-                accelerator="cpu",
-                repeat_epochs=3,
-                gradient_accumulation_steps=2,
-                device_count=2,
-            )
-
-        self.assertEqual(max_steps, 9)
+        self.assertEqual(len(train_dataloader), 3)
+        self.assertEqual(len(validation_dataloader), 1)
+        self.assertTrue(mocked_stream.call_args_list[0].kwargs["repeat_forever"])
+        self.assertEqual(mocked_cache.call_args.kwargs["path"], cache_path)
 
     def test_build_trainer_validates_by_global_step(self) -> None:
         # ---------------------------------------------------------
