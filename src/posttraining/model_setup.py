@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from huggingface_hub import snapshot_download
 
 from src.shared.device_utils import is_global_zero_process
@@ -10,7 +12,12 @@ from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.tokenizer import ByteLevelBPE
 
 
-DEFAULT_BASE_MODEL_ID = "KeisukeMiyamoto/lambda-1-160m-base"
+# ---------------------------------------------------------
+# Load the base model repository from .env before CLI defaults
+# are defined for posttraining.
+# ---------------------------------------------------------
+load_dotenv()
+DEFAULT_BASE_MODEL_ID = os.environ["HF_REPO_BASE"]
 
 
 def download_base_model(base_model_id: str) -> Path:
