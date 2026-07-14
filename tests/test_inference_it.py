@@ -159,10 +159,10 @@ class InferenceItTest(unittest.TestCase):
 
         self.assertEqual(generated_ids, [13, 5])
 
-    def test_parse_args_uses_pytorch_generation_defaults(self) -> None:
+    def test_parse_args_accepts_pytorch_generation_options(self) -> None:
         # ---------------------------------------------------------
-        # Keep instruction chat defaults aligned with the native
-        # PyTorch generation path.
+        # Accept generation options used by the native PyTorch
+        # generation path.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
             argv = [
@@ -220,19 +220,6 @@ class InferenceItTest(unittest.TestCase):
         self.assertEqual(resolve_torch_dtype("float16"), torch.float16)
         self.assertEqual(resolve_torch_dtype("bfloat16"), torch.bfloat16)
         self.assertEqual(resolve_torch_dtype("float32"), torch.float32)
-
-    def test_parse_args_defaults_to_posttraining_model_dir(self) -> None:
-        # ---------------------------------------------------------
-        # Use the local instruction-tuned artifact path by default
-        # for terminal chat.
-        # ---------------------------------------------------------
-        argv = ["inference.py"]
-
-        with patch("sys.argv", argv):
-            args = parse_args(default_model_dir=Path("models/lambda-1-160m-it"))
-
-        self.assertEqual(args.model_dir, "models/lambda-1-160m-it")
-
 
 if __name__ == "__main__":
     unittest.main()

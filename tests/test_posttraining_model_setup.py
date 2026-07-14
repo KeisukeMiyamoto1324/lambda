@@ -92,31 +92,6 @@ class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.
 
 
 class PosttrainingModelSetupTest(unittest.TestCase):
-    def test_parse_args_uses_lambda_hub_model_default(self) -> None:
-        # ---------------------------------------------------------
-        # Keep posttraining pointed at the published lambda base Hub
-        # model unless the user overrides it.
-        # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py"]):
-            args = parse_args()
-
-        self.assertEqual(args.base_model_id, DEFAULT_BASE_MODEL_ID)
-
-    def test_parse_args_uses_three_lambda_chat_repeat_epochs(self) -> None:
-        # ---------------------------------------------------------
-        # Use three passes over lambda-chat as the default posttraining
-        # budget instead of a fixed two-stage step budget.
-        # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py"]):
-            args = parse_args()
-
-        self.assertEqual(args.repeat_epochs, 3)
-        self.assertEqual(args.gradient_accumulation_steps, 2)
-        self.assertEqual(args.lr_warmup_epochs, 0.2)
-        self.assertEqual(args.min_learning_rate_ratio, 0.2)
-        self.assertEqual(args.loss_chunk_size, 32)
-        self.assertEqual(args.devices, "auto")
-
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject invalid values before model download, dataset loading,

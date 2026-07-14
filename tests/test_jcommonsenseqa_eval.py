@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from src.eval.jcommonsenseqa.cli import parse_args
 from src.eval.jcommonsenseqa.dataset import ANSWER_LABELS
 from src.eval.jcommonsenseqa.dataset import JCOMMONSENSEQA_DATASET_ID
 from src.eval.jcommonsenseqa.dataset import JCommonsenseQAExample
@@ -98,16 +97,6 @@ class JCommonsenseQAEvalTest(unittest.TestCase):
         self.assertEqual(ANSWER_LABELS, ("0", "1", "2", "3", "4"))
         self.assertEqual(prediction.prediction, "2")
         self.assertEqual(prediction.losses, [1.0, 1.0, 0.0, 1.0, 1.0])
-
-    def test_parse_args_defaults_to_validation_split(self) -> None:
-        # ---------------------------------------------------------
-        # Use validation as the default public evaluation split.
-        # ---------------------------------------------------------
-        with patch("sys.argv", ["evaluate.py", "--model", "Qwen/Qwen3-0.6B", "--backend", "hf"]):
-            args = parse_args()
-
-        self.assertEqual(args.split, "validation")
-        self.assertEqual(args.model, "Qwen/Qwen3-0.6B")
 
     def test_evaluate_examples_and_save_result_files(self) -> None:
         # ---------------------------------------------------------

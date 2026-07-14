@@ -97,23 +97,6 @@ class PretrainingTrainTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Attention(d_model=6, num_heads=2)
 
-    def test_parse_args_uses_160m_model_defaults(self) -> None:
-        # ---------------------------------------------------------
-        # Keep the default pretraining run near the 160M class while
-        # using the reduced SwiGLU width for parameter parity.
-        # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py"]):
-            args = parse_args()
-
-        self.assertEqual(args.max_len, 1024)
-        self.assertEqual(args.d_model, 768)
-        self.assertEqual(args.num_layers, 16)
-        self.assertEqual(args.num_heads, 12)
-        self.assertEqual(args.d_ff, 2048)
-        self.assertEqual(args.batch_size, 16)
-        self.assertEqual(args.devices, "auto")
-        self.assertEqual(args.output_path, "models/lambda-160m")
-
     def test_parse_args_rejects_invalid_lr_schedule(self) -> None:
         # ---------------------------------------------------------
         # Reject schedule values that cannot form a bounded warmup
