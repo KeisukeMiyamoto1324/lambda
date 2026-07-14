@@ -1,4 +1,5 @@
 import argparse
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -89,6 +90,30 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(args.repeat_epochs, 3)
         self.assertEqual(args.devices, "auto")
+
+    def test_parse_args_rejects_invalid_runtime_values(self) -> None:
+        # ---------------------------------------------------------
+        # Reject invalid values before model download, dataset loading,
+        # or DataLoader construction can begin.
+        # ---------------------------------------------------------
+        invalid_cases = [
+            ("--max-len", "0"),
+            ("--learning-rate", "0"),
+            ("--batch-size", "0"),
+            ("--repeat-epochs", "0"),
+            ("--num-workers", "-1"),
+            ("--val-batches", "0"),
+            ("--val-check-interval", "0"),
+            ("--checkpoint-every-n-steps", "0"),
+            ("--metric-log-every-n-steps", "0"),
+        ]
+
+        for flag, value in invalid_cases:
+            with self.subTest(flag=flag), patch("sys.argv", ["train.py", flag, value]), patch(
+                "sys.stderr", io.StringIO()
+            ):
+                with self.assertRaises(SystemExit):
+                    parse_args()
 
     def test_download_base_model_uses_hub_snapshot(self) -> None:
         # ---------------------------------------------------------

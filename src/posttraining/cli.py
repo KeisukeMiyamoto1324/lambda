@@ -1,6 +1,7 @@
 import argparse
 
 from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
+from src.shared.cli import require
 from src.shared.device_utils import resolve_devices
 
 
@@ -24,18 +25,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--devices", type=str, default="auto")
     args = parser.parse_args()
 
+    # ---------------------------------------------------------
+    # Validate posttraining-specific runtime values before loading
+    # the base model or materializing the remote chat dataset.
+    # ---------------------------------------------------------
     try:
+        require(args.max_len > 0, "--max-len must be greater than 0")
+        require(args.learning_rate > 0.0, "--learning-rate must be greater than 0")
+        require(args.batch_size > 0, "--batch-size must be greater than 0")
+        require(args.repeat_epochs > 0, "--repeat-epochs must be greater than 0")
+        require(args.num_workers >= 0, "--num-workers must be greater than or equal to 0")
+        require(args.val_batches > 0, "--val-batches must be greater than 0")
+        require(args.val_check_interval > 0, "--val-check-interval must be greater than 0")
+        require(args.checkpoint_every_n_steps > 0, "--checkpoint-every-n-steps must be greater than 0")
+        require(args.metric_log_every_n_steps > 0, "--metric-log-every-n-steps must be greater than 0")
         resolve_devices(devices=args.devices)
     except ValueError as error:
         parser.error(str(error))
 
     return args
-
-
-def validate_repeat_epochs(args: argparse.Namespace) -> None:
-    # ---------------------------------------------------------
-    # Reject invalid epoch counts before loading the model or
-    # materializing the SFT dataset.
-    # ---------------------------------------------------------
-    if args.repeat_epochs <= 0:
-        raise ValueError("repeat_epochs must be positive")

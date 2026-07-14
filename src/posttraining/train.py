@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.posttraining.artifacts import save_chat_model
 from src.posttraining.cli import parse_args
-from src.posttraining.cli import validate_repeat_epochs
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.model_setup import build_tokenizer
 from src.posttraining.model_setup import download_base_model
@@ -31,7 +30,6 @@ def main() -> None:
     # active accelerator configuration.
     # ---------------------------------------------------------
     args = parse_args()
-    validate_repeat_epochs(args=args)
     model_dir = Path(args.output_path)
     model_dir.mkdir(parents=True, exist_ok=True)
     accelerator = resolve_accelerator()
