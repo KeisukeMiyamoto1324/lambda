@@ -15,6 +15,7 @@ def build_dataloaders(
     num_workers: int,
     accelerator: str,
     repeat_epochs: int,
+    gradient_accumulation_steps: int = 1,
     device_count: int = 1,
 ) -> tuple[DataLoader, DataLoader, int]:
     # ---------------------------------------------------------
@@ -70,5 +71,6 @@ def build_dataloaders(
         pin_memory=use_pin_memory,
         persistent_workers=use_persistent_workers,
     )
-    max_steps = math.ceil(len(train_dataset) / (batch_size * device_count)) * repeat_epochs
+    samples_per_step = batch_size * gradient_accumulation_steps * device_count
+    max_steps = math.ceil(len(train_dataset) / samples_per_step) * repeat_epochs
     return train_dataloader, validation_dataloader, max_steps

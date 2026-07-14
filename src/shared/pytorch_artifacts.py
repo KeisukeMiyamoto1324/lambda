@@ -41,6 +41,7 @@ def build_model_from_config(
     learning_rate: float | None = None,
     max_len: int | None = None,
     use_fused_optimizer: bool = False,
+    loss_chunk_size: int | None = None,
     lr_warmup_steps: int | None = None,
     lr_total_steps: int | None = None,
     min_learning_rate: float | None = None,
@@ -59,6 +60,11 @@ def build_model_from_config(
         learning_rate=float(model_config["learning_rate"] if learning_rate is None else learning_rate),
         pad_token_id=int(model_config["pad_token_id"]),
         use_fused_optimizer=use_fused_optimizer,
+        loss_chunk_size=int(
+            model_config.get("loss_chunk_size", 32)
+            if loss_chunk_size is None
+            else loss_chunk_size
+        ),
         lr_warmup_steps=lr_warmup_steps,
         lr_total_steps=lr_total_steps,
         min_learning_rate=min_learning_rate,
@@ -71,6 +77,7 @@ def load_pytorch_model(
     learning_rate: float | None = None,
     max_len: int | None = None,
     use_fused_optimizer: bool = False,
+    loss_chunk_size: int | None = None,
     lr_warmup_steps: int | None = None,
     lr_total_steps: int | None = None,
     min_learning_rate: float | None = None,
@@ -87,6 +94,7 @@ def load_pytorch_model(
         learning_rate=learning_rate,
         max_len=max_len,
         use_fused_optimizer=use_fused_optimizer,
+        loss_chunk_size=loss_chunk_size,
         lr_warmup_steps=lr_warmup_steps,
         lr_total_steps=lr_total_steps,
         min_learning_rate=min_learning_rate,

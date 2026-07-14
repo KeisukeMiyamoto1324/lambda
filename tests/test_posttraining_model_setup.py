@@ -89,6 +89,10 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             args = parse_args()
 
         self.assertEqual(args.repeat_epochs, 3)
+        self.assertEqual(args.gradient_accumulation_steps, 2)
+        self.assertEqual(args.lr_warmup_steps, 2000)
+        self.assertEqual(args.min_learning_rate_ratio, 0.2)
+        self.assertEqual(args.loss_chunk_size, 32)
         self.assertEqual(args.devices, "auto")
 
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
@@ -99,13 +103,17 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         invalid_cases = [
             ("--max-len", "0"),
             ("--learning-rate", "0"),
+            ("--lr-warmup-steps", "-1"),
+            ("--min-learning-rate-ratio", "1.1"),
             ("--batch-size", "0"),
+            ("--gradient-accumulation-steps", "0"),
             ("--repeat-epochs", "0"),
             ("--num-workers", "-1"),
             ("--val-batches", "0"),
             ("--val-check-interval", "0"),
             ("--checkpoint-every-n-steps", "0"),
             ("--metric-log-every-n-steps", "0"),
+            ("--loss-chunk-size", "0"),
         ]
 
         for flag, value in invalid_cases:
@@ -114,6 +122,35 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ):
                 with self.assertRaises(SystemExit):
                     parse_args()
+
+    def test_parse_args_rejects_two_resume_sources(self) -> None:
+        # ---------------------------------------------------------
+        # Prevent checkpoint restoration and fresh weight loading
+        # from being requested for the same training run.
+        # ---------------------------------------------------------
+        argv = [
+            "train.py",
+            "--resume-from-checkpoint",
+            "last.ckpt",
+            "--continue-from-model",
+            "model.pth",
+        ]
+
+        with patch("sys.argv", argv), patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args()
+
+    def test_parse_args_accepts_hub_push_with_it_repo(self) -> None:
+        # ---------------------------------------------------------
+        # Accept automatic upload when the instruction-tuned model
+        # repository is available through the environment.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["train.py", "--push-to-hub"]), patch.dict(
+            "os.environ", {"HF_REPO_IT": "user/lambda-it"}
+        ):
+            args = parse_args()
+
+        self.assertTrue(args.push_to_hub)
 
     def test_download_base_model_uses_hub_snapshot(self) -> None:
         # ---------------------------------------------------------
@@ -190,10 +227,18 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     tokenizer=FakeTokenizer(),
                     learning_rate=5e-5,
                     accelerator="cpu",
+                    loss_chunk_size=8,
+                    lr_warmup_steps=2,
+                    lr_total_steps=10,
+                    min_learning_rate=1e-5,
                 )
 
         self.assertEqual(model_config["max_len"], 16)
         self.assertEqual(model_config["num_layers"], 4)
+        self.assertEqual(loaded_model.loss_chunk_size, 8)
+        self.assertEqual(loaded_model.lr_warmup_steps, 2)
+        self.assertEqual(loaded_model.lr_total_steps, 10)
+        self.assertEqual(loaded_model.min_learning_rate, 1e-5)
         self.assertTrue(all(parameter.requires_grad for parameter in loaded_model.parameters()))
 
     def test_save_chat_model_persists_pytorch_metadata(self) -> None:
@@ -220,8 +265,13 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 devices="auto",
                 device_count=1,
                 global_batch_size=16,
-                global_effective_batch_size=16,
+                global_effective_batch_size=32,
                 batch_size=16,
+                gradient_accumulation_steps=2,
+                lr_warmup_steps=2,
+                min_learning_rate=1e-5,
+                min_learning_rate_ratio=0.2,
+                loss_chunk_size=8,
             )
             model_config = {
                 "max_len": 16,
@@ -259,6 +309,11 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["devices"], "auto")
         self.assertEqual(payload["device_count"], 1)
         self.assertEqual(payload["global_batch_size"], 16)
+        self.assertEqual(payload["effective_batch_size"], 32)
+        self.assertEqual(payload["global_effective_batch_size"], 32)
+        self.assertEqual(payload["gradient_accumulation_steps"], 2)
+        self.assertEqual(payload["lr_schedule"], "warmup_cosine")
+        self.assertEqual(payload["loss_chunk_size"], 8)
         self.assertTrue(model_path_exists)
 
     def test_lambda_chat_dataset_maps_messages_to_chat_messages(self) -> None:
@@ -336,6 +391,27 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(max_steps, 6)
 
+    def test_build_dataloaders_accounts_for_gradient_accumulation(self) -> None:
+        # ---------------------------------------------------------
+        # Keep repeat epochs tied to samples processed when several
+        # batches contribute to one optimizer step.
+        # ---------------------------------------------------------
+        fake_datasets = [FakeDataset(size=17), FakeDataset(size=2)]
+
+        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
+            _, _, max_steps = build_dataloaders(
+                tokenizer=FakeTokenizer(),
+                max_len=8,
+                batch_size=2,
+                num_workers=0,
+                accelerator="cpu",
+                repeat_epochs=3,
+                gradient_accumulation_steps=2,
+                device_count=2,
+            )
+
+        self.assertEqual(max_steps, 9)
+
     def test_build_trainer_validates_by_global_step(self) -> None:
         # ---------------------------------------------------------
         # Allow validation intervals larger than one epoch by using
@@ -352,10 +428,12 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 val_batches=8,
                 checkpoint_every_n_steps=1000,
                 metric_log_every_n_steps=50,
+                gradient_accumulation_steps=2,
             )
 
         self.assertIsNone(trainer.check_val_every_n_epoch)
         self.assertEqual(trainer.val_check_interval, 500)
+        self.assertEqual(trainer.accumulate_grad_batches, 2)
 
 
 if __name__ == "__main__":

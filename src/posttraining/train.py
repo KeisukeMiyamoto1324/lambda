@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 import sys
 
 from dotenv import load_dotenv
+import torch
 
 # ---------------------------------------------------------
 # Add the project root so direct script execution can import
@@ -21,6 +23,7 @@ from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
+from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 load_dotenv()
 
 
@@ -39,17 +42,11 @@ def main() -> None:
     precision = resolve_precision(accelerator=accelerator)
 
     # ---------------------------------------------------------
-    # Download and load the base tokenizer and model, then build
-    # all SFT dataloaders from the shared chat template.
+    # Download the base artifacts and build all SFT dataloaders from
+    # the shared chat template before configuring the LR schedule.
     # ---------------------------------------------------------
     base_model_dir = download_base_model(base_model_id=args.base_model_id)
     tokenizer = build_tokenizer(base_model_dir=base_model_dir, output_path=model_dir)
-    model, model_config = load_base_model(
-        base_model_dir=base_model_dir,
-        tokenizer=tokenizer,
-        learning_rate=args.learning_rate,
-        accelerator=accelerator,
-    )
     train_dataloader, validation_dataloader, max_steps = build_dataloaders(
         tokenizer=tokenizer,
         max_len=args.max_len,
@@ -57,12 +54,44 @@ def main() -> None:
         num_workers=args.num_workers,
         accelerator=accelerator,
         repeat_epochs=args.repeat_epochs,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         device_count=device_count,
     )
+    min_learning_rate = args.learning_rate * args.min_learning_rate_ratio
+
+    if args.lr_warmup_steps >= max_steps:
+        raise ValueError("--lr-warmup-steps must be less than the derived posttraining steps")
+
+    # ---------------------------------------------------------
+    # Load the base model with posttraining loss and LR settings,
+    # then optionally replace its weights for a fresh continued run.
+    # ---------------------------------------------------------
+    model, model_config = load_base_model(
+        base_model_dir=base_model_dir,
+        tokenizer=tokenizer,
+        learning_rate=args.learning_rate,
+        accelerator=accelerator,
+        loss_chunk_size=args.loss_chunk_size,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_total_steps=max_steps,
+        min_learning_rate=min_learning_rate,
+    )
+
+    if args.continue_from_model:
+        model_state = torch.load(
+            Path(args.continue_from_model),
+            map_location="cpu",
+            weights_only=True,
+        )
+        model.load_state_dict(model_state)
+
     args.posttraining_steps = max_steps
     args.device_count = device_count
     args.global_batch_size = args.batch_size * device_count
-    args.global_effective_batch_size = args.batch_size * device_count
+    args.global_effective_batch_size = (
+        args.batch_size * args.gradient_accumulation_steps * device_count
+    )
+    args.min_learning_rate = min_learning_rate
 
     # ---------------------------------------------------------
     # Run lambda-chat instruction tuning for the requested number of
@@ -98,6 +127,18 @@ def main() -> None:
         eos_token_id=tokenizer.token_to_id(tokenizer.eos_token),
         end_of_turn_token_id=tokenizer.token_to_id(tokenizer.end_of_turn_token),
     )
+
+    # ---------------------------------------------------------
+    # Optionally publish the completed instruction-tuned artifacts
+    # to the configured Hugging Face model repository.
+    # ---------------------------------------------------------
+    if args.push_to_hub:
+        push_pytorch_model_artifacts(
+            output_path=model_dir,
+            repo_id=os.environ["HF_REPO_IT"],
+            private=True,
+            commit_message="Upload lambda instruction-tuned model",
+        )
 
 
 if __name__ == "__main__":

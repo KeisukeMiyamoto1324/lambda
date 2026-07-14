@@ -75,6 +75,10 @@ def load_base_model(
     tokenizer: ByteLevelBPE,
     learning_rate: float,
     accelerator: str,
+    loss_chunk_size: int = 32,
+    lr_warmup_steps: int | None = None,
+    lr_total_steps: int | None = None,
+    min_learning_rate: float | None = None,
 ) -> tuple[DecoderOnlyTransformer, dict[str, int | float]]:
     # ---------------------------------------------------------
     # Load PyTorch model artifacts directly and prepare every layer
@@ -85,6 +89,10 @@ def load_base_model(
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=learning_rate,
         use_fused_optimizer=accelerator == "cuda",
+        loss_chunk_size=loss_chunk_size,
+        lr_warmup_steps=lr_warmup_steps,
+        lr_total_steps=lr_total_steps,
+        min_learning_rate=min_learning_rate,
     )
     model = model.to(resolve_device())
     model.learning_rate = learning_rate

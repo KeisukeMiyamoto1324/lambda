@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 import lightning as L
+from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from torch.utils.data import DataLoader
@@ -20,6 +21,7 @@ def build_trainer(
     val_batches: int,
     checkpoint_every_n_steps: int,
     metric_log_every_n_steps: int,
+    gradient_accumulation_steps: int = 1,
     devices: int | str = 1,
     strategy: str | None = None,
 ) -> L.Trainer:
@@ -45,6 +47,7 @@ def build_trainer(
             save_top_k=1,
             save_last=True,
         ),
+        LearningRateMonitor(logging_interval="step"),
     ]
     metrics_logger = CSVLogger(
         save_dir=model_dir,
@@ -65,6 +68,7 @@ def build_trainer(
         precision=precision,
         callbacks=callbacks,
         logger=metrics_logger,
+        accumulate_grad_batches=gradient_accumulation_steps,
         log_every_n_steps=metric_log_every_n_steps,
         val_check_interval=val_check_interval,
         check_val_every_n_epoch=None,
@@ -80,6 +84,7 @@ def fit_stage(
     trainer: L.Trainer,
     train_dataloader: DataLoader,
     validation_dataloader: DataLoader,
+    checkpoint_path: str | None = None,
 ) -> None:
     # ---------------------------------------------------------
     # Run one trainer stage against the supplied train stream and
@@ -89,6 +94,7 @@ def fit_stage(
         model,
         train_dataloaders=train_dataloader,
         val_dataloaders=validation_dataloader,
+        ckpt_path=checkpoint_path,
     )
 
 
@@ -121,11 +127,13 @@ def train_stage(
         val_batches=args.val_batches,
         checkpoint_every_n_steps=args.checkpoint_every_n_steps,
         metric_log_every_n_steps=args.metric_log_every_n_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     fit_stage(
         model=model,
         trainer=trainer,
         train_dataloader=train_dataloader,
         validation_dataloader=validation_dataloader,
+        checkpoint_path=args.resume_from_checkpoint or None,
     )
     return trainer
