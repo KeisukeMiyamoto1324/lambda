@@ -90,7 +90,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(args.repeat_epochs, 3)
         self.assertEqual(args.gradient_accumulation_steps, 2)
-        self.assertEqual(args.lr_warmup_steps, 2000)
+        self.assertEqual(args.lr_warmup_epochs, 0.2)
         self.assertEqual(args.min_learning_rate_ratio, 0.2)
         self.assertEqual(args.loss_chunk_size, 32)
         self.assertEqual(args.devices, "auto")
@@ -103,7 +103,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         invalid_cases = [
             ("--max-len", "0"),
             ("--learning-rate", "0"),
-            ("--lr-warmup-steps", "-1"),
+            ("--lr-warmup-epochs", "-1"),
+            ("--lr-warmup-epochs", "3"),
             ("--min-learning-rate-ratio", "1.1"),
             ("--batch-size", "0"),
             ("--gradient-accumulation-steps", "0"),
@@ -268,7 +269,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 global_effective_batch_size=32,
                 batch_size=16,
                 gradient_accumulation_steps=2,
-                lr_warmup_steps=2,
+                lr_warmup_epochs=0.2,
+                posttraining_warmup_steps=2,
                 min_learning_rate=1e-5,
                 min_learning_rate_ratio=0.2,
                 loss_chunk_size=8,
@@ -313,6 +315,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["global_effective_batch_size"], 32)
         self.assertEqual(payload["gradient_accumulation_steps"], 2)
         self.assertEqual(payload["lr_schedule"], "warmup_cosine")
+        self.assertEqual(payload["lr_warmup_epochs"], 0.2)
+        self.assertEqual(payload["lr_warmup_steps"], 2)
         self.assertEqual(payload["loss_chunk_size"], 8)
         self.assertTrue(model_path_exists)
 

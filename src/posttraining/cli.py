@@ -16,8 +16,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-model-id", type=str, default=DEFAULT_BASE_MODEL_ID)
     parser.add_argument("--output-path", type=str, default="models/lambda-1-160m-it")
     parser.add_argument("--max-len", type=int, default=1024)
-    parser.add_argument("--learning-rate", type=float, default=5e-5)
-    parser.add_argument("--lr-warmup-steps", type=int, default=2000)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--lr-warmup-epochs", type=float, default=0.2)
     parser.add_argument("--min-learning-rate-ratio", type=float, default=0.2)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
@@ -44,7 +44,11 @@ def parse_args() -> argparse.Namespace:
     try:
         require(args.max_len > 0, "--max-len must be greater than 0")
         require(args.learning_rate > 0.0, "--learning-rate must be greater than 0")
-        require(args.lr_warmup_steps >= 0, "--lr-warmup-steps must be greater than or equal to 0")
+        require(args.lr_warmup_epochs >= 0.0, "--lr-warmup-epochs must be greater than or equal to 0")
+        require(
+            args.lr_warmup_epochs < args.repeat_epochs,
+            "--lr-warmup-epochs must be less than --repeat-epochs",
+        )
         require(
             0.0 <= args.min_learning_rate_ratio <= 1.0,
             "--min-learning-rate-ratio must be between 0.0 and 1.0",

@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 import sys
@@ -58,9 +59,8 @@ def main() -> None:
         device_count=device_count,
     )
     min_learning_rate = args.learning_rate * args.min_learning_rate_ratio
-
-    if args.lr_warmup_steps >= max_steps:
-        raise ValueError("--lr-warmup-steps must be less than the derived posttraining steps")
+    steps_per_epoch = max_steps // args.repeat_epochs
+    warmup_steps = math.ceil(steps_per_epoch * args.lr_warmup_epochs)
 
     # ---------------------------------------------------------
     # Load the base model with posttraining loss and LR settings,
@@ -72,7 +72,7 @@ def main() -> None:
         learning_rate=args.learning_rate,
         accelerator=accelerator,
         loss_chunk_size=args.loss_chunk_size,
-        lr_warmup_steps=args.lr_warmup_steps,
+        lr_warmup_steps=warmup_steps,
         lr_total_steps=max_steps,
         min_learning_rate=min_learning_rate,
     )
@@ -92,6 +92,7 @@ def main() -> None:
         args.batch_size * args.gradient_accumulation_steps * device_count
     )
     args.min_learning_rate = min_learning_rate
+    args.posttraining_warmup_steps = warmup_steps
 
     # ---------------------------------------------------------
     # Run lambda-chat instruction tuning for the requested number of
