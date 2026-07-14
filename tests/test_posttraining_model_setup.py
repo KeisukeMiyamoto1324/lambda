@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 
 from src.posttraining.artifacts import save_chat_model
 from src.posttraining.dataloaders import build_dataloaders
-from src.posttraining.dataset import IchikaraInstructionDataset
+from src.posttraining.dataset import LambdaChatDataset
 from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
 from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
@@ -79,9 +79,9 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(args.base_model_id, DEFAULT_BASE_MODEL_ID)
 
-    def test_parse_args_uses_three_ichikara_repeat_epochs(self) -> None:
+    def test_parse_args_uses_three_lambda_chat_repeat_epochs(self) -> None:
         # ---------------------------------------------------------
-        # Use three passes over Ichikara as the default posttraining
+        # Use three passes over lambda-chat as the default posttraining
         # budget instead of a fixed two-stage step budget.
         # ---------------------------------------------------------
         with patch("sys.argv", ["train.py"]):
@@ -227,8 +227,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
         self.assertEqual(payload["training_max_len"], 8)
         self.assertEqual(payload["trainable_layers"], "all")
-        self.assertEqual(payload["posttraining_datasets"], ["msfm/ichikara-instruction-all:train"])
-        self.assertEqual(payload["validation_dataset"], "msfm/ichikara-instruction-all:test")
+        self.assertEqual(payload["posttraining_datasets"], ["KeisukeMiyamoto/lambda-chat:train"])
+        self.assertEqual(payload["validation_dataset"], "KeisukeMiyamoto/lambda-chat:validation")
         self.assertEqual(payload["repeat_epochs"], 3)
         self.assertEqual(payload["posttraining_steps"], 9)
         self.assertEqual(payload["devices"], "auto")
@@ -236,19 +236,25 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["global_batch_size"], 16)
         self.assertTrue(model_path_exists)
 
-    def test_ichikara_dataset_maps_text_and_output_to_chat_messages(self) -> None:
+    def test_lambda_chat_dataset_maps_messages_to_chat_messages(self) -> None:
         # ---------------------------------------------------------
-        # Convert Ichikara text/output columns into the user and
-        # assistant roles expected by the shared chat template.
+        # Convert lambda-chat message dictionaries into the roles
+        # and content expected by the shared chat template.
         # ---------------------------------------------------------
-        sample = {"text": "質問", "output": "回答", "ID": "id-1", "category": 1}
+        sample = {
+            "id": "id-1",
+            "messages": [
+                {"role": "user", "content": "質問"},
+                {"role": "assistant", "content": "回答"},
+            ],
+        }
 
         with patch("src.posttraining.dataset.load_dataset", return_value=[sample]) as mocked_load:
             with patch(
                 "src.posttraining.dataset.build_tensor_example",
                 return_value=(torch.tensor([1]), torch.tensor([2])),
             ) as mocked_build:
-                dataset = IchikaraInstructionDataset(
+                dataset = LambdaChatDataset(
                     tokenizer=FakeTokenizer(),
                     split="train",
                     max_len=8,
@@ -259,7 +265,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 )
 
         messages = mocked_build.call_args.kwargs["messages"]
-        mocked_load.assert_called_once_with(path="msfm/ichikara-instruction-all", split="train")
+        mocked_load.assert_called_once_with(path="KeisukeMiyamoto/lambda-chat", split="train")
         self.assertEqual(len(dataset), 1)
         self.assertEqual(messages[0].role, "user")
         self.assertEqual(messages[0].content, "質問")
@@ -273,7 +279,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         # ---------------------------------------------------------
         fake_datasets = [FakeDataset(size=5), FakeDataset(size=2)]
 
-        with patch("src.posttraining.dataloaders.IchikaraInstructionDataset", side_effect=fake_datasets):
+        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
             _, _, max_steps = build_dataloaders(
                 tokenizer=FakeTokenizer(),
                 max_len=8,
@@ -292,7 +298,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         # ---------------------------------------------------------
         fake_datasets = [FakeDataset(size=5), FakeDataset(size=2)]
 
-        with patch("src.posttraining.dataloaders.IchikaraInstructionDataset", side_effect=fake_datasets):
+        with patch("src.posttraining.dataloaders.LambdaChatDataset", side_effect=fake_datasets):
             _, _, max_steps = build_dataloaders(
                 tokenizer=FakeTokenizer(),
                 max_len=8,
@@ -313,7 +319,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             trainer = build_trainer(
                 model_dir=Path(temp_dir),
-                stage_name="ichikara",
+                stage_name="lambda-chat",
                 max_steps=723,
                 accelerator="cpu",
                 precision="32-true",

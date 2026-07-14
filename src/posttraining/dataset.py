@@ -7,12 +7,12 @@ from src.posttraining.chat_template import tokenize_chat_messages
 from src.shared.tokenizer import ByteLevelBPE
 
 
-ICHIKARA_DATASET_PATH = "msfm/ichikara-instruction-all"
-ICHIKARA_TRAIN_SPLIT = "train"
-ICHIKARA_VALIDATION_SPLIT = "test"
+LAMBDA_CHAT_DATASET_PATH = "KeisukeMiyamoto/lambda-chat"
+LAMBDA_CHAT_TRAIN_SPLIT = "train"
+LAMBDA_CHAT_VALIDATION_SPLIT = "validation"
 
 
-class IchikaraInstructionDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
+class LambdaChatDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __init__(
         self,
         tokenizer: ByteLevelBPE,
@@ -26,16 +26,16 @@ class IchikaraInstructionDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         super().__init__()
 
         # ---------------------------------------------------------
-        # Load Ichikara instruction records locally so the small
-        # train split can be reused for several epochs.
+        # Load lambda-chat records locally so the train split can be
+        # reused for several epochs.
         # ---------------------------------------------------------
-        dataset = load_dataset(path=ICHIKARA_DATASET_PATH, split=split)
+        dataset = load_dataset(path=LAMBDA_CHAT_DATASET_PATH, split=split)
         self.examples = [
             build_tensor_example(
                 tokenizer=tokenizer,
                 messages=[
-                    ChatMessage(role="user", content=sample["text"]),
-                    ChatMessage(role="assistant", content=sample["output"]),
+                    ChatMessage(role=message["role"], content=message["content"])
+                    for message in sample["messages"]
                 ],
                 max_len=max_len,
                 pad_token_id=pad_token_id,
@@ -48,7 +48,7 @@ class IchikaraInstructionDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     def __len__(self) -> int:
         # ---------------------------------------------------------
-        # Return the number of loaded Ichikara instruction examples
+        # Return the number of loaded lambda-chat examples
         # available in the selected split.
         # ---------------------------------------------------------
         return len(self.examples)

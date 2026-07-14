@@ -4,9 +4,9 @@ from pathlib import Path
 
 import torch
 
-from src.posttraining.dataset import ICHIKARA_DATASET_PATH
-from src.posttraining.dataset import ICHIKARA_TRAIN_SPLIT
-from src.posttraining.dataset import ICHIKARA_VALIDATION_SPLIT
+from src.posttraining.dataset import LAMBDA_CHAT_DATASET_PATH
+from src.posttraining.dataset import LAMBDA_CHAT_TRAIN_SPLIT
+from src.posttraining.dataset import LAMBDA_CHAT_VALIDATION_SPLIT
 from src.shared.model.transformer import DecoderOnlyTransformer
 
 
@@ -50,9 +50,9 @@ def save_chat_model(
         "trainable_layers": "all",
         "chat_template_version": 1,
         "posttraining_datasets": [
-            f"{ICHIKARA_DATASET_PATH}:{ICHIKARA_TRAIN_SPLIT}",
+            f"{LAMBDA_CHAT_DATASET_PATH}:{LAMBDA_CHAT_TRAIN_SPLIT}",
         ],
-        "validation_dataset": f"{ICHIKARA_DATASET_PATH}:{ICHIKARA_VALIDATION_SPLIT}",
+        "validation_dataset": f"{LAMBDA_CHAT_DATASET_PATH}:{LAMBDA_CHAT_VALIDATION_SPLIT}",
         "repeat_epochs": args.repeat_epochs,
         "posttraining_steps": args.posttraining_steps,
     }

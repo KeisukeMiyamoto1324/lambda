@@ -2,9 +2,9 @@ import math
 
 from torch.utils.data import DataLoader
 
-from src.posttraining.dataset import ICHIKARA_TRAIN_SPLIT
-from src.posttraining.dataset import ICHIKARA_VALIDATION_SPLIT
-from src.posttraining.dataset import IchikaraInstructionDataset
+from src.posttraining.dataset import LAMBDA_CHAT_TRAIN_SPLIT
+from src.posttraining.dataset import LAMBDA_CHAT_VALIDATION_SPLIT
+from src.posttraining.dataset import LambdaChatDataset
 from src.shared.tokenizer import ByteLevelBPE
 
 
@@ -27,21 +27,21 @@ def build_dataloaders(
     end_of_turn_token_id = tokenizer.token_to_id(tokenizer.end_of_turn_token)
 
     # ---------------------------------------------------------
-    # Build fixed Ichikara train and validation datasets from the
-    # official train/test splits.
+    # Build fixed lambda-chat train and validation datasets from the
+    # official train/validation splits.
     # ---------------------------------------------------------
-    train_dataset = IchikaraInstructionDataset(
+    train_dataset = LambdaChatDataset(
         tokenizer=tokenizer,
-        split=ICHIKARA_TRAIN_SPLIT,
+        split=LAMBDA_CHAT_TRAIN_SPLIT,
         max_len=max_len,
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,
         eos_token_id=eos_token_id,
         end_of_turn_token_id=end_of_turn_token_id,
     )
-    validation_dataset = IchikaraInstructionDataset(
+    validation_dataset = LambdaChatDataset(
         tokenizer=tokenizer,
-        split=ICHIKARA_VALIDATION_SPLIT,
+        split=LAMBDA_CHAT_VALIDATION_SPLIT,
         max_len=max_len,
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,

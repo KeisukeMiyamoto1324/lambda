@@ -28,7 +28,7 @@ load_dotenv()
 
 def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
-    # Define CLI arguments for Ichikara SFT from a pretrained base
+    # Define CLI arguments for lambda-chat SFT from a pretrained base
     # model into a chat-oriented model artifact.
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
@@ -96,13 +96,13 @@ def main() -> None:
     args.global_effective_batch_size = args.batch_size * device_count
 
     # ---------------------------------------------------------
-    # Run Ichikara instruction tuning for the requested number of
+    # Run lambda-chat instruction tuning for the requested number of
     # passes through the train split.
     # ---------------------------------------------------------
     trainer = train_stage(
         model=model,
         model_dir=model_dir,
-        stage_name="ichikara",
+        stage_name="lambda-chat",
         max_steps=max_steps,
         train_dataloader=train_dataloader,
         validation_dataloader=validation_dataloader,
@@ -114,7 +114,7 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Save the final model after Ichikara tuning completes.
+    # Save the final model after lambda-chat tuning completes.
     # ---------------------------------------------------------
     if not trainer.is_global_zero:
         return
