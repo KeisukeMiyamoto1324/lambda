@@ -19,9 +19,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repeat-epochs", type=int, default=3)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--val-batches", type=int, default=8)
-    parser.add_argument("--val-check-interval", type=int, default=500)
-    parser.add_argument("--checkpoint-every-n-steps", type=int, default=1000)
-    parser.add_argument("--metric-log-every-n-steps", type=int, default=50)
+    parser.add_argument("--val-check-interval", type=int, default=1000)
+    parser.add_argument("--checkpoint-every-n-steps", type=int, default=2000)
+    parser.add_argument("--metric-log-every-n-steps", type=int, default=500)
     parser.add_argument("--devices", type=str, default="auto")
     args = parser.parse_args()
 
