@@ -146,7 +146,7 @@ class PretrainingDatasetTest(unittest.TestCase):
             ),
             (
                 "cleaned-fineweb2-edu-jp",
-                "MK0727/CleanedFineWeb2Edu-jp",
+                "KeisukeMiyamoto/CleanedFineWeb2Edu-jp",
                 "default",
                 "train",
                 "text",

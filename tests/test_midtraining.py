@@ -22,7 +22,7 @@ class MidtrainingTest(unittest.TestCase):
                 MIDTRAINING_CORPUS_CASE.text_column,
             ),
             (
-                "MK0727/SyntheticTextbook-jp",
+                "KeisukeMiyamoto/SyntheticTextbook-jp",
                 "default",
                 "train",
                 "rewrite",

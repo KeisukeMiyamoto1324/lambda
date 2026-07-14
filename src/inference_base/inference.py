@@ -12,7 +12,7 @@ from src.inference_base.cli import parse_args
 from src.inference_base.runtime import run_inference
 
 
-DEFAULT_MODEL_ID = "MK0727/lambda-1-160m-base"
+DEFAULT_MODEL_ID = "KeisukeMiyamoto/lambda-1-160m-base"
 
 
 def main() -> None:
