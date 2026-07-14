@@ -9,12 +9,12 @@ import torch
 from torch.utils.data import Dataset
 
 from src.posttraining.artifacts import save_chat_model
+from src.posttraining.cli import parse_args
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.dataset import LambdaChatDataset
 from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
 from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
-from src.posttraining.train import parse_args
 from src.posttraining.trainer import build_trainer
 from src.shared.model.transformer import DecoderOnlyTransformer
 
