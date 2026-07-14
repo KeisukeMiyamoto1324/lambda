@@ -375,14 +375,14 @@ class PretrainingTrainTest(unittest.TestCase):
             "--push-to-hub",
         ]
 
-        with patch("sys.argv", argv), patch.dict("os.environ", {"HF_REPO": "user/myllm"}):
+        with patch("sys.argv", argv), patch.dict("os.environ", {"HF_REPO_BASE": "user/myllm"}):
             args = parse_args()
 
         self.assertTrue(args.push_to_hub)
 
     def test_parse_args_rejects_missing_hf_repo(self) -> None:
         # ---------------------------------------------------------
-        # Reject Hub publishing without HF_REPO so training never
+        # Reject Hub publishing without HF_REPO_BASE so training never
         # finishes with an ambiguous upload target.
         # ---------------------------------------------------------
         argv = [

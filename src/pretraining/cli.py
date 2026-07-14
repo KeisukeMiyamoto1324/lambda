@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     if args.continue_from_model and not Path(args.continue_from_model).is_file():
         parser.error("--continue-from-model must point to an existing model state file")
 
-    if args.push_to_hub and not os.environ.get("HF_REPO"):
-        parser.error("HF_REPO is required in the environment when --push-to-hub is set")
+    if args.push_to_hub and not os.environ.get("HF_REPO_BASE"):
+        parser.error("HF_REPO_BASE is required in the environment when --push-to-hub is set")
 
     return args

@@ -4,21 +4,21 @@ import sys
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 
 
 def main() -> None:
     # ---------------------------------------------------------
-    # Load the Hugging Face token and repository name from .env.
-    # This script uploads the completed model without training.
+    # Load the Hugging Face token and base repository name from .env.
+    # This script uploads the completed pretraining model.
     # ---------------------------------------------------------
     load_dotenv()
 
     hf_token = os.environ["HF_TOKEN"]
-    hf_repo = os.environ["HF_REPO"]
-    model_dir = Path("models/lambda-160m-midtrained")
+    hf_repo = os.environ["HF_REPO_BASE"]
+    model_dir = Path("models/lambda-160m")
 
     # ---------------------------------------------------------
     # Push only PyTorch weights, model config, and tokenizer files.
@@ -28,7 +28,7 @@ def main() -> None:
         output_path=model_dir,
         repo_id=hf_repo,
         private=True,
-        commit_message="Upload lambda-160m-midtrained pretrained model",
+        commit_message="Upload lambda-160m pretrained model",
         token=hf_token,
     )
 

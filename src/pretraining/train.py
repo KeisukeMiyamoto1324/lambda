@@ -360,7 +360,7 @@ def main() -> None:
     if args.push_to_hub:
         push_pytorch_model_artifacts(
             output_path=model_dir,
-            repo_id=os.environ["HF_REPO"],
+            repo_id=os.environ["HF_REPO_BASE"],
             private=True,
             commit_message="Upload pretrained MyLLM model",
         )
