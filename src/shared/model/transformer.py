@@ -385,8 +385,8 @@ def normalize_training_batch(
     batch: tuple[torch.Tensor, ...],
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     # ---------------------------------------------------------
-    # Support packed pretraining batches while keeping existing
-    # posttraining batches on the two-tensor path.
+    # Support packed training batches while retaining compatibility
+    # with callers that still provide only inputs and labels.
     # ---------------------------------------------------------
     if len(batch) == 2:
         input_tokens, labels = batch

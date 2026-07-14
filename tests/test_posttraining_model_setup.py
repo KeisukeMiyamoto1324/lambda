@@ -10,6 +10,8 @@ import torch
 from torch.utils.data import Dataset
 
 from src.posttraining.artifacts import save_chat_model
+from src.posttraining.chat_template import ChatMessage
+from src.posttraining.chat_template import tokenize_chat_messages
 from src.posttraining.cli import parse_args
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.dataset import LambdaChatDataset
@@ -25,6 +27,9 @@ class FakeTokenizer:
     bos_token = "|<bos>|"
     eos_token = "|<eos>|"
     end_of_turn_token = "|<end_of_turn>|"
+    system_token = "|<system>|"
+    user_token = "|<user>|"
+    assistant_token = "|<assistant>|"
 
     def get_vocab_size(self) -> int:
         # ---------------------------------------------------------
@@ -42,11 +47,25 @@ class FakeTokenizer:
             self.bos_token: 1,
             self.eos_token: 2,
             self.end_of_turn_token: 3,
+            self.system_token: 4,
+            self.user_token: 5,
+            self.assistant_token: 6,
         }
         return token_ids[token]
 
+    def tokenize(self, sentence: str) -> list[int]:
+        # ---------------------------------------------------------
+        # Return fixed content ids so chat masks can be tested without
+        # loading a tokenizer artifact.
+        # ---------------------------------------------------------
+        token_ids = {
+            "question": [7, 8],
+            "answer": [9, 10],
+        }
+        return token_ids[sentence]
 
-class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
+
+class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]):
     def __init__(self, size: int) -> None:
         # ---------------------------------------------------------
         # Store a fixed dataset size so dataloader step math can be
@@ -60,13 +79,16 @@ class FakeDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         # ---------------------------------------------------------
         return self.size
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self,
+        index: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # ---------------------------------------------------------
-        # Return one tiny tensor pair for DataLoader construction.
+        # Return one tiny packed sample for DataLoader construction.
         # ---------------------------------------------------------
         del index
         tensor = torch.tensor([1], dtype=torch.long)
-        return tensor, tensor
+        return tensor, tensor, tensor, tensor
 
 
 class PosttrainingModelSetupTest(unittest.TestCase):
@@ -335,8 +357,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         with patch("src.posttraining.dataset.load_dataset", return_value=[sample]) as mocked_load:
             with patch(
-                "src.posttraining.dataset.build_tensor_example",
-                return_value=(torch.tensor([1]), torch.tensor([2])),
+                "src.posttraining.dataset.build_chat_segment",
+                return_value=([1], [2]),
             ) as mocked_build:
                 dataset = LambdaChatDataset(
                     tokenizer=FakeTokenizer(),
@@ -355,6 +377,83 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(messages[0].content, "質問")
         self.assertEqual(messages[1].role, "assistant")
         self.assertEqual(messages[1].content, "回答")
+
+    def test_chat_tokenization_returns_unpadded_assistant_targets(self) -> None:
+        # ---------------------------------------------------------
+        # Keep user tokens masked and leave both streams unpadded so
+        # several conversations can share one packed sequence.
+        # ---------------------------------------------------------
+        example = tokenize_chat_messages(
+            tokenizer=FakeTokenizer(),
+            messages=[
+                ChatMessage(role="user", content="question"),
+                ChatMessage(role="assistant", content="answer"),
+            ],
+            max_len=20,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+            end_of_turn_token_id=3,
+        )
+
+        self.assertEqual(example.input_ids, [1, 5, 7, 8, 3, 6, 9, 10, 3])
+        self.assertEqual(example.labels, [0, 0, 0, 0, 0, 9, 10, 3, 2])
+
+    def test_chat_tokenization_keeps_max_len_truncation(self) -> None:
+        # ---------------------------------------------------------
+        # Preserve the existing leading-context truncation instead
+        # of splitting one long conversation into separate segments.
+        # ---------------------------------------------------------
+        example = tokenize_chat_messages(
+            tokenizer=FakeTokenizer(),
+            messages=[ChatMessage(role="assistant", content="answer")],
+            max_len=2,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+            end_of_turn_token_id=3,
+        )
+
+        self.assertEqual(example.input_ids, [1, 6])
+        self.assertEqual(example.labels, [0, 9])
+
+    def test_lambda_chat_dataset_bucket_packs_conversations(self) -> None:
+        # ---------------------------------------------------------
+        # Pack short conversations by best fit while resetting
+        # positions and isolating each conversation by segment id.
+        # ---------------------------------------------------------
+        samples = [
+            {"messages": [{"role": "user", "content": str(index)}]}
+            for index in range(3)
+        ]
+        segments = [
+            ([1, 10, 11, 12], [0, 10, 11, 12]),
+            ([1, 20], [0, 20]),
+            ([1, 30, 31], [0, 30, 31]),
+        ]
+
+        with patch("src.posttraining.dataset.load_dataset", return_value=samples):
+            with patch("src.posttraining.dataset.build_chat_segment", side_effect=segments):
+                dataset = LambdaChatDataset(
+                    tokenizer=FakeTokenizer(),
+                    split="validation",
+                    max_len=6,
+                    pad_token_id=0,
+                    bos_token_id=1,
+                    eos_token_id=2,
+                    end_of_turn_token_id=3,
+                )
+
+        input_ids, labels, position_ids, segment_ids = dataset[0]
+        remaining_input_ids, _, remaining_position_ids, remaining_segment_ids = dataset[1]
+        self.assertEqual(len(dataset), 2)
+        self.assertEqual(input_ids.tolist(), [1, 10, 11, 12, 1, 20])
+        self.assertEqual(labels.tolist(), [0, 10, 11, 12, 0, 20])
+        self.assertEqual(position_ids.tolist(), [0, 1, 2, 3, 0, 1])
+        self.assertEqual(segment_ids.tolist(), [0, 0, 0, 0, 1, 1])
+        self.assertEqual(remaining_input_ids.tolist(), [1, 30, 31, 0, 0, 0])
+        self.assertEqual(remaining_position_ids.tolist(), [0, 1, 2, 0, 0, 0])
+        self.assertEqual(remaining_segment_ids.tolist(), [0, 0, 0, -1, -1, -1])
 
     def test_build_dataloaders_computes_three_epoch_steps(self) -> None:
         # ---------------------------------------------------------

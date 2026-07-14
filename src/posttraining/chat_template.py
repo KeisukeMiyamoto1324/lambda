@@ -91,10 +91,7 @@ def tokenize_chat_messages(
     ]
 
     # ---------------------------------------------------------
-    # Pad both streams to the configured fixed context length so
-    # batches can be stacked by the default PyTorch collator.
+    # Return unpadded streams so the dataset can combine several
+    # independent conversations into one fixed-length sequence.
     # ---------------------------------------------------------
-    padding_size = max_len - len(input_token_ids)
-    padded_input_ids = input_token_ids + [pad_token_id for _ in range(padding_size)]
-    padded_label_ids = label_token_ids + [pad_token_id for _ in range(padding_size)]
-    return TokenizedChatExample(input_ids=padded_input_ids, labels=padded_label_ids)
+    return TokenizedChatExample(input_ids=input_token_ids, labels=label_token_ids)

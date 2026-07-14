@@ -21,6 +21,162 @@ BUCKET_PACKING_SEED = 17
 RankPartition = tuple[int, int]
 
 
+class BucketSequencePacker:
+    def __init__(
+        self,
+        max_len: int,
+        pad_token_id: int,
+        source_name: str,
+    ) -> None:
+        # ---------------------------------------------------------
+        # Keep a bounded segment window and deterministic source key
+        # shared by every training pipeline that uses bucket packing.
+        # ---------------------------------------------------------
+        self.max_len = max_len
+        self.pad_token_id = pad_token_id
+        self.source_name = source_name
+        self.segment_buffer: list[PackedTrainingSegment] = []
+        self.segment_index = 0
+
+    def add_segment(
+        self,
+        input_token_ids: list[int],
+        label_token_ids: list[int],
+    ) -> PackedTrainingExample | None:
+        # ---------------------------------------------------------
+        # Add one unpadded segment and emit one packed example when
+        # the bounded best-fit window reaches its configured size.
+        # ---------------------------------------------------------
+        order_key = self._resolve_segment_order_key(segment_index=self.segment_index)
+        self.segment_buffer.append((input_token_ids, label_token_ids, order_key))
+        self.segment_index += 1
+
+        if len(self.segment_buffer) < BUCKET_PACKING_BUFFER_SEGMENTS:
+            return None
+
+        return self._build_bucket_packed_example()
+
+    def drain(self) -> Iterator[PackedTrainingExample]:
+        # ---------------------------------------------------------
+        # Flush every remaining segment after the source ends so no
+        # short training sequence is dropped from the packed dataset.
+        # ---------------------------------------------------------
+        while len(self.segment_buffer) > 0:
+            yield self._build_bucket_packed_example()
+
+    def _resolve_segment_order_key(self, segment_index: int) -> int:
+        # ---------------------------------------------------------
+        # Create a fixed-seed deterministic tie breaker so bucket
+        # packing can reorder segments without run-to-run drift.
+        # ---------------------------------------------------------
+        payload = f"{BUCKET_PACKING_SEED}:{self.source_name}:{segment_index}".encode("utf-8")
+        digest = blake2b(payload, digest_size=8).digest()
+        return int.from_bytes(digest, byteorder="big")
+
+    def _build_bucket_packed_example(self) -> PackedTrainingExample:
+        # ---------------------------------------------------------
+        # Start from the longest segment, then repeatedly choose the
+        # buffered segment that best fills the remaining context.
+        # ---------------------------------------------------------
+        selected_segments: list[PackedTrainingSegment] = []
+        start_index = self._find_longest_segment_index()
+        selected_segments.append(self.segment_buffer.pop(start_index))
+        remaining_size = self.max_len - len(selected_segments[0][0])
+
+        while remaining_size > 0:
+            next_index = self._find_best_fit_segment_index(
+                remaining_size=remaining_size,
+            )
+
+            if next_index is None:
+                break
+
+            selected_segment = self.segment_buffer.pop(next_index)
+            selected_segments.append(selected_segment)
+            remaining_size -= len(selected_segment[0])
+
+        return self._build_example_from_segments(segments=selected_segments)
+
+    def _find_longest_segment_index(self) -> int:
+        # ---------------------------------------------------------
+        # Pick the longest segment first. The fixed order key keeps
+        # ties deterministic while allowing bounded reordering.
+        # ---------------------------------------------------------
+        return max(
+            range(len(self.segment_buffer)),
+            key=lambda index: (len(self.segment_buffer[index][0]), -self.segment_buffer[index][2]),
+        )
+
+    def _find_best_fit_segment_index(self, remaining_size: int) -> int | None:
+        # ---------------------------------------------------------
+        # Choose the largest segment that fits in the current gap.
+        # Return None when every remaining segment is too large.
+        # ---------------------------------------------------------
+        candidate_indexes = [
+            index
+            for index, segment in enumerate(self.segment_buffer)
+            if len(segment[0]) <= remaining_size
+        ]
+
+        if len(candidate_indexes) == 0:
+            return None
+
+        return max(
+            candidate_indexes,
+            key=lambda index: (len(self.segment_buffer[index][0]), -self.segment_buffer[index][2]),
+        )
+
+    def _build_example_from_segments(
+        self,
+        segments: list[PackedTrainingSegment],
+    ) -> PackedTrainingExample:
+        # ---------------------------------------------------------
+        # Flatten selected segments into one packed sample while
+        # resetting positions and segment ids for each segment.
+        # ---------------------------------------------------------
+        input_token_ids: list[int] = []
+        label_token_ids: list[int] = []
+        position_ids: list[int] = []
+        segment_ids: list[int] = []
+
+        for segment_id, segment in enumerate(segments):
+            segment_input_ids, segment_label_ids, _ = segment
+            segment_len = len(segment_input_ids)
+            input_token_ids.extend(segment_input_ids)
+            label_token_ids.extend(segment_label_ids)
+            position_ids.extend(range(segment_len))
+            segment_ids.extend([segment_id for _ in range(segment_len)])
+
+        return self._build_example(
+            input_token_ids=input_token_ids,
+            label_token_ids=label_token_ids,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+        )
+
+    def _build_example(
+        self,
+        input_token_ids: list[int],
+        label_token_ids: list[int],
+        position_ids: list[int],
+        segment_ids: list[int],
+    ) -> PackedTrainingExample:
+        # ---------------------------------------------------------
+        # Pad all packed streams so every sample matches the fixed
+        # context length expected by the model and DataLoader.
+        # ---------------------------------------------------------
+        padding_size = self.max_len - len(input_token_ids)
+        padded_input_ids = input_token_ids + [self.pad_token_id for _ in range(padding_size)]
+        padded_label_ids = label_token_ids + [self.pad_token_id for _ in range(padding_size)]
+        padded_position_ids = position_ids + [0 for _ in range(padding_size)]
+        padded_segment_ids = segment_ids + [-1 for _ in range(padding_size)]
+        inputs = torch.tensor(padded_input_ids, dtype=torch.long)
+        labels = torch.tensor(padded_label_ids, dtype=torch.long)
+        positions = torch.tensor(padded_position_ids, dtype=torch.long)
+        segments = torch.tensor(padded_segment_ids, dtype=torch.long)
+        return inputs, labels, positions, segments
+
+
 class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
     def __init__(
         self,
@@ -127,8 +283,11 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
                 world_size=partition_count,
             )
 
-        segment_buffer: list[PackedTrainingSegment] = []
-        segment_index = 0
+        packer = BucketSequencePacker(
+            max_len=self.max_len,
+            pad_token_id=self.pad_token_id,
+            source_name=self.corpus_case.name,
+        )
 
         for sample in dataset:
             # ---------------------------------------------------------
@@ -138,15 +297,15 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
             for input_token_ids, label_token_ids in self._create_segments(
                 text=sample[self.corpus_case.text_column]
             ):
-                order_key = self._resolve_segment_order_key(segment_index=segment_index)
-                segment_buffer.append((input_token_ids, label_token_ids, order_key))
-                segment_index += 1
+                packed_example = packer.add_segment(
+                    input_token_ids=input_token_ids,
+                    label_token_ids=label_token_ids,
+                )
 
-                if len(segment_buffer) >= BUCKET_PACKING_BUFFER_SEGMENTS:
-                    yield self._build_bucket_packed_example(segment_buffer=segment_buffer)
+                if packed_example is not None:
+                    yield packed_example
 
-        while len(segment_buffer) > 0:
-            yield self._build_bucket_packed_example(segment_buffer=segment_buffer)
+        yield from packer.drain()
 
     def _resolve_rank_partition(self) -> RankPartition:
         # ---------------------------------------------------------
@@ -209,129 +368,6 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         for chunk_start in chunk_starts:
             window_token_ids = document_token_ids[chunk_start : chunk_start + self.max_len + 1]
             yield window_token_ids[:-1], window_token_ids[1:]
-
-    def _resolve_segment_order_key(self, segment_index: int) -> int:
-        # ---------------------------------------------------------
-        # Create a fixed-seed deterministic tie breaker so bucket
-        # packing can reorder segments without run-to-run drift.
-        # ---------------------------------------------------------
-        payload = f"{BUCKET_PACKING_SEED}:{self.corpus_case.name}:{segment_index}".encode("utf-8")
-        digest = blake2b(payload, digest_size=8).digest()
-        return int.from_bytes(digest, byteorder="big")
-
-    def _build_bucket_packed_example(
-        self,
-        segment_buffer: list[PackedTrainingSegment],
-    ) -> PackedTrainingExample:
-        # ---------------------------------------------------------
-        # Start from the longest segment, then repeatedly choose the
-        # buffered segment that best fills the remaining context.
-        # ---------------------------------------------------------
-        selected_segments: list[PackedTrainingSegment] = []
-        start_index = self._find_longest_segment_index(segment_buffer=segment_buffer)
-        selected_segments.append(segment_buffer.pop(start_index))
-        remaining_size = self.max_len - len(selected_segments[0][0])
-
-        while remaining_size > 0:
-            next_index = self._find_best_fit_segment_index(
-                segment_buffer=segment_buffer,
-                remaining_size=remaining_size,
-            )
-
-            if next_index is None:
-                break
-
-            selected_segment = segment_buffer.pop(next_index)
-            selected_segments.append(selected_segment)
-            remaining_size -= len(selected_segment[0])
-
-        return self._build_example_from_segments(segments=selected_segments)
-
-    def _find_longest_segment_index(
-        self,
-        segment_buffer: list[PackedTrainingSegment],
-    ) -> int:
-        # ---------------------------------------------------------
-        # Pick the longest segment first. The fixed order key keeps
-        # ties deterministic while allowing bounded reordering.
-        # ---------------------------------------------------------
-        return max(
-            range(len(segment_buffer)),
-            key=lambda index: (len(segment_buffer[index][0]), -segment_buffer[index][2]),
-        )
-
-    def _find_best_fit_segment_index(
-        self,
-        segment_buffer: list[PackedTrainingSegment],
-        remaining_size: int,
-    ) -> int | None:
-        # ---------------------------------------------------------
-        # Choose the largest segment that fits in the current gap.
-        # Return None when every remaining segment is too large.
-        # ---------------------------------------------------------
-        candidate_indexes = [
-            index
-            for index, segment in enumerate(segment_buffer)
-            if len(segment[0]) <= remaining_size
-        ]
-
-        if len(candidate_indexes) == 0:
-            return None
-
-        return max(
-            candidate_indexes,
-            key=lambda index: (len(segment_buffer[index][0]), -segment_buffer[index][2]),
-        )
-
-    def _build_example_from_segments(
-        self,
-        segments: list[PackedTrainingSegment],
-    ) -> PackedTrainingExample:
-        # ---------------------------------------------------------
-        # Flatten selected segments into one packed sample while
-        # resetting positions and segment ids for each segment.
-        # ---------------------------------------------------------
-        input_token_ids: list[int] = []
-        label_token_ids: list[int] = []
-        position_ids: list[int] = []
-        segment_ids: list[int] = []
-
-        for segment_id, segment in enumerate(segments):
-            segment_input_ids, segment_label_ids, _ = segment
-            segment_len = len(segment_input_ids)
-            input_token_ids.extend(segment_input_ids)
-            label_token_ids.extend(segment_label_ids)
-            position_ids.extend(range(segment_len))
-            segment_ids.extend([segment_id for _ in range(segment_len)])
-
-        return self._build_example(
-            input_token_ids=input_token_ids,
-            label_token_ids=label_token_ids,
-            position_ids=position_ids,
-            segment_ids=segment_ids,
-        )
-
-    def _build_example(
-        self,
-        input_token_ids: list[int],
-        label_token_ids: list[int],
-        position_ids: list[int],
-        segment_ids: list[int],
-    ) -> PackedTrainingExample:
-        # ---------------------------------------------------------
-        # Pad all packed streams so every sample matches the fixed
-        # context length expected by the model and DataLoader.
-        # ---------------------------------------------------------
-        padding_size = self.max_len - len(input_token_ids)
-        padded_input_ids = input_token_ids + [self.pad_token_id for _ in range(padding_size)]
-        padded_label_ids = label_token_ids + [self.pad_token_id for _ in range(padding_size)]
-        padded_position_ids = position_ids + [0 for _ in range(padding_size)]
-        padded_segment_ids = segment_ids + [-1 for _ in range(padding_size)]
-        inputs = torch.tensor(padded_input_ids, dtype=torch.long)
-        labels = torch.tensor(padded_label_ids, dtype=torch.long)
-        positions = torch.tensor(padded_position_ids, dtype=torch.long)
-        segments = torch.tensor(padded_segment_ids, dtype=torch.long)
-        return inputs, labels, positions, segments
 
 
 class LocalTokenizedDataset(Dataset[PackedTrainingExample]):
