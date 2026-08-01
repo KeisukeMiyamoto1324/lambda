@@ -5,6 +5,8 @@ from transformers import AutoTokenizer
 
 from src.eval.shared.hf_scorer import TransformersChoiceScorer
 from src.eval.shared.native_scorer import NativeChoiceScorer
+from src.eval.shared.prompt_format import build_hf_prompt_formatter
+from src.eval.shared.prompt_format import build_native_prompt_formatter
 from src.eval.shared.scorer_types import ChoiceScorer
 from src.inference_base.generation import resolve_torch_dtype
 from src.shared.device_utils import resolve_device
@@ -17,6 +19,7 @@ def load_choice_scorer(
     backend: str,
     torch_dtype_name: str,
     trust_remote_code: bool,
+    prompt_format: str = "base",
 ) -> ChoiceScorer:
     # ---------------------------------------------------------
     # Resolve the backend from the model source and return one
@@ -28,12 +31,14 @@ def load_choice_scorer(
         return load_native_choice_scorer(
             model_source=model_source,
             torch_dtype_name=torch_dtype_name,
+            prompt_format=prompt_format,
         )
 
     return load_transformers_choice_scorer(
         model_source=model_source,
         torch_dtype_name=torch_dtype_name,
         trust_remote_code=trust_remote_code,
+        prompt_format=prompt_format,
     )
 
 
@@ -65,7 +70,11 @@ def is_local_model_path(model_source: str) -> bool:
     return model_path.is_absolute() or model_source.startswith(("./", "../", "models/"))
 
 
-def load_native_choice_scorer(model_source: str, torch_dtype_name: str) -> NativeChoiceScorer:
+def load_native_choice_scorer(
+    model_source: str,
+    torch_dtype_name: str,
+    prompt_format: str,
+) -> NativeChoiceScorer:
     # ---------------------------------------------------------
     # Load this project's PyTorch artifacts and tokenizer from a
     # local model directory.
@@ -88,6 +97,11 @@ def load_native_choice_scorer(model_source: str, torch_dtype_name: str) -> Nativ
         model = model.to(dtype=torch_dtype)
 
     model.eval()
+    prompt_formatter = build_native_prompt_formatter(
+        prompt_format=prompt_format,
+        tokenizer=tokenizer,
+        model_config=model_config,
+    )
     return NativeChoiceScorer(
         model=model,
         tokenizer=tokenizer,
@@ -97,6 +111,7 @@ def load_native_choice_scorer(model_source: str, torch_dtype_name: str) -> Nativ
         device=device,
         model_source=model_source,
         torch_dtype_name=torch_dtype_name,
+        prompt_formatter=prompt_formatter,
     )
 
 
@@ -104,6 +119,7 @@ def load_transformers_choice_scorer(
     model_source: str,
     torch_dtype_name: str,
     trust_remote_code: bool,
+    prompt_format: str,
 ) -> TransformersChoiceScorer:
     # ---------------------------------------------------------
     # Load a Hugging Face causal language model with Transformers
@@ -122,10 +138,15 @@ def load_transformers_choice_scorer(
     )
     model = model.to(device=device)
     model.eval()
+    prompt_formatter = build_hf_prompt_formatter(
+        prompt_format=prompt_format,
+        tokenizer=tokenizer,
+    )
     return TransformersChoiceScorer(
         model=model,
         tokenizer=tokenizer,
         device=device,
         model_source=model_source,
         torch_dtype_name=torch_dtype_name,
+        prompt_formatter=prompt_formatter,
     )

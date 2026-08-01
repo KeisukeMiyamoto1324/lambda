@@ -2,7 +2,7 @@ import argparse
 
 from src.inference_it.generation import generate_chat_response
 from src.inference_it.generation import resolve_torch_dtype
-from src.posttraining.chat_template import ChatMessage
+from src.shared.chat_template import ChatMessage
 from src.shared.console import console
 from src.shared.device_utils import resolve_device
 from src.shared.model.transformer import DecoderOnlyTransformer

@@ -7,6 +7,7 @@ class ChoiceScorer(Protocol):
     model_source: str
     device_name: str
     torch_dtype_name: str
+    prompt_format: str
 
     def score_continuations(self, prompt: str, continuations: tuple[str, ...]) -> list[float]:
         ...

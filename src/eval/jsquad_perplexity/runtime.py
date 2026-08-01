@@ -65,6 +65,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
         backend=args.backend,
         torch_dtype_name=args.torch_dtype,
         trust_remote_code=args.trust_remote_code,
+        prompt_format="base",
     )
     contexts = load_contexts()
     selected_contexts = select_examples(

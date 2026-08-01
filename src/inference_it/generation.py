@@ -2,9 +2,8 @@ import torch
 
 from src.inference_base.generation import resolve_torch_dtype
 from src.inference_base.generation import select_next_token
-from src.posttraining.chat_template import ChatMessage
-from src.posttraining.chat_template import get_role_token
-from src.posttraining.chat_template import normalize_role
+from src.shared.chat_template import ChatMessage
+from src.shared.chat_template import build_chat_input_ids as build_shared_chat_input_ids
 from src.shared.model.kv_cache import KeyValueCache
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.tokenizer import ByteLevelBPE
@@ -15,26 +14,14 @@ def build_chat_input_ids(
     messages: list[ChatMessage],
 ) -> list[int]:
     # ---------------------------------------------------------
-    # Serialize chat history with the same role and turn markers
-    # used during instruction tuning.
+    # Keep the inference API stable while using the shared chat
+    # serializer used by training and evaluation.
     # ---------------------------------------------------------
-    bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
-    end_of_turn_token_id = tokenizer.token_to_id(tokenizer.end_of_turn_token)
-    input_ids = [bos_token_id]
-
-    for message in messages:
-        role = normalize_role(role=message.role)
-        role_token_id = tokenizer.token_to_id(get_role_token(tokenizer=tokenizer, role=role))
-        content_token_ids = tokenizer.tokenize(sentence=message.content)
-        input_ids.extend([role_token_id, *content_token_ids, end_of_turn_token_id])
-
-    # ---------------------------------------------------------
-    # Add the assistant role marker as the generation cue for the
-    # next model response.
-    # ---------------------------------------------------------
-    assistant_token_id = tokenizer.token_to_id(tokenizer.assistant_token)
-    input_ids.append(assistant_token_id)
-    return input_ids
+    return build_shared_chat_input_ids(
+        tokenizer=tokenizer,
+        messages=messages,
+        add_generation_prompt=True,
+    )
 
 
 def generate_token_ids(

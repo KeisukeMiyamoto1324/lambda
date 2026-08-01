@@ -1,46 +1,15 @@
 from dataclasses import dataclass
 
+from src.shared.chat_template import ChatMessage
+from src.shared.chat_template import get_role_token
+from src.shared.chat_template import normalize_role
 from src.shared.tokenizer import ByteLevelBPE
-
-
-@dataclass(frozen=True)
-class ChatMessage:
-    role: str
-    content: str
 
 
 @dataclass(frozen=True)
 class TokenizedChatExample:
     input_ids: list[int]
     labels: list[int]
-
-
-def normalize_role(role: str) -> str:
-    # ---------------------------------------------------------
-    # Convert dataset-specific role names into the chat roles
-    # represented by tokenizer special tokens.
-    # ---------------------------------------------------------
-    role_by_name = {
-        "human": "user",
-        "user": "user",
-        "gpt": "assistant",
-        "assistant": "assistant",
-        "system": "system",
-    }
-    return role_by_name[role]
-
-
-def get_role_token(tokenizer: ByteLevelBPE, role: str) -> str:
-    # ---------------------------------------------------------
-    # Resolve the special token string that marks each supported
-    # chat role inside a serialized conversation.
-    # ---------------------------------------------------------
-    token_by_role = {
-        "system": tokenizer.system_token,
-        "user": tokenizer.user_token,
-        "assistant": tokenizer.assistant_token,
-    }
-    return token_by_role[role]
 
 
 def tokenize_chat_messages(

@@ -1,9 +1,12 @@
 from dataclasses import dataclass
+from dataclasses import field
 
 import torch
 
 from src.eval.shared.labeling import build_continuation_labels
 from src.eval.shared.losses import merge_text_scores
+from src.eval.shared.prompt_format import BasePromptFormatter
+from src.eval.shared.prompt_format import PromptFormatter
 from src.eval.shared.scorer_types import TextScore
 from src.shared.tokenizer import ByteLevelBPE
 
@@ -19,21 +22,27 @@ class NativeChoiceScorer:
     model_source: str
     torch_dtype_name: str
     backend: str = "native"
+    prompt_formatter: PromptFormatter = field(default_factory=BasePromptFormatter)
 
     @property
     def device_name(self) -> str:
         return self.device.type
+
+    @property
+    def prompt_format(self) -> str:
+        return self.prompt_formatter.name
 
     def score_continuations(self, prompt: str, continuations: tuple[str, ...]) -> list[float]:
         # ---------------------------------------------------------
         # Score candidate continuations with the native loss path
         # used by this repository's decoder-only Transformer.
         # ---------------------------------------------------------
+        formatted_prompt = self.prompt_formatter.format(prompt=prompt)
         return [
             score_native_continuation(
                 model=self.model,
                 tokenizer=self.tokenizer,
-                prompt=prompt,
+                prompt=formatted_prompt.text,
                 continuation=continuation,
                 device=self.device,
                 pad_token_id=self.pad_token_id,

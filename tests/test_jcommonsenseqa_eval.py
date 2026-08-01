@@ -21,6 +21,7 @@ class FakeChoiceScorer:
     model_source = "models/test"
     device_name = "cpu"
     torch_dtype_name = "auto"
+    prompt_format = "base"
 
     def score_continuations(self, prompt: str, continuations: tuple[str, ...]) -> list[float]:
         # ---------------------------------------------------------
@@ -128,6 +129,7 @@ class JCommonsenseQAEvalTest(unittest.TestCase):
 
         self.assertEqual(config["dataset"], "sbintuitions/JCommonsenseQA")
         self.assertEqual(config["split"], "validation")
+        self.assertEqual(config["prompt_format"], "base")
         self.assertEqual(config["overall"]["accuracy"], 0.5)
         self.assertEqual(rows[0]["question"], "q1")
         self.assertEqual(rows[0]["answer"], "2")

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 import torch
@@ -9,6 +10,8 @@ from src.eval.shared.labeling import pad_token_row
 from src.eval.shared.losses import compute_loss_sum
 from src.eval.shared.losses import compute_row_losses
 from src.eval.shared.losses import merge_text_scores
+from src.eval.shared.prompt_format import BasePromptFormatter
+from src.eval.shared.prompt_format import PromptFormatter
 from src.eval.shared.scorer_types import TextScore
 
 
@@ -20,18 +23,28 @@ class TransformersChoiceScorer:
     model_source: str
     torch_dtype_name: str
     backend: str = "hf"
+    prompt_formatter: PromptFormatter = field(default_factory=BasePromptFormatter)
 
     @property
     def device_name(self) -> str:
         return self.device.type
+
+    @property
+    def prompt_format(self) -> str:
+        return self.prompt_formatter.name
 
     def score_continuations(self, prompt: str, continuations: tuple[str, ...]) -> list[float]:
         # ---------------------------------------------------------
         # Tokenize each full prompt plus continuation because some
         # tokenizers produce different suffix ids at the boundary.
         # ---------------------------------------------------------
+        formatted_prompt = self.prompt_formatter.format(prompt=prompt)
         encoded_rows = [
-            encode_hf_text(tokenizer=self.tokenizer, text=f"{prompt}{continuation}")
+            encode_hf_text(
+                tokenizer=self.tokenizer,
+                text=f"{formatted_prompt.text}{continuation}",
+                add_special_tokens=formatted_prompt.add_special_tokens,
+            )
             for continuation in continuations
         ]
         full_token_ids = [token_ids for token_ids, _ in encoded_rows]
@@ -45,7 +58,7 @@ class TransformersChoiceScorer:
         labels = build_hf_labels(
             full_token_ids=full_token_ids,
             offset_rows=offset_rows,
-            prompt_text_len=len(prompt),
+            prompt_text_len=len(formatted_prompt.text),
             max_len=max_len,
         )
 

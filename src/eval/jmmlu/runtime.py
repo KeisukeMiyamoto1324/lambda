@@ -36,6 +36,7 @@ class EvaluationResult:
     backend: str
     dataset: str
     scoring_method: str
+    prompt_format: str
     device: str
     torch_dtype: str
     overall: SubjectResult
@@ -53,6 +54,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
         backend=args.backend,
         torch_dtype_name=args.torch_dtype,
         trust_remote_code=args.trust_remote_code,
+        prompt_format=args.prompt_format,
     )
 
     archive_path = download_jmmlu_archive()
@@ -130,6 +132,7 @@ def build_evaluation_result(
         backend=scorer.backend,
         dataset=JMMLU_DATASET_ID,
         scoring_method="zero_shot_mmlu_answer_label_log_likelihood",
+        prompt_format=scorer.prompt_format,
         device=scorer.device_name,
         torch_dtype=scorer.torch_dtype_name,
         overall=overall,
@@ -161,6 +164,7 @@ def render_result(result: EvaluationResult) -> None:
     console.print("[bold cyan]JMMLU result[/bold cyan]")
     console.print(f"model: {result.model_source}")
     console.print(f"backend: {result.backend}")
+    console.print(f"prompt_format: {result.prompt_format}")
     console.print(f"accuracy: {result.overall.accuracy:.4f}")
     console.print(f"correct: {result.overall.correct}")
     console.print(f"total: {result.overall.total}")
@@ -211,6 +215,7 @@ def save_result(
         "backend": result.backend,
         "dataset": result.dataset,
         "scoring_method": result.scoring_method,
+        "prompt_format": result.prompt_format,
         "device": result.device,
         "torch_dtype": result.torch_dtype,
         "limit": limit,

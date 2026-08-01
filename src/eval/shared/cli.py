@@ -18,3 +18,11 @@ def build_eval_parser() -> argparse.ArgumentParser:
         default="auto",
     )
     return parser
+
+
+def add_prompt_format_argument(parser: argparse.ArgumentParser) -> None:
+    # ---------------------------------------------------------
+    # Add prompt formatting only to benchmarks that score an
+    # assistant answer continuation.
+    # ---------------------------------------------------------
+    parser.add_argument("--prompt-format", choices=["auto", "base", "chat"], default="auto")

@@ -19,6 +19,11 @@ from src.eval.shared.labeling import build_hf_labels
 from src.eval.shared.losses import compute_row_losses
 from src.eval.shared.native_scorer import NativeChoiceScorer
 from src.eval.shared.native_scorer import score_native_answer_label
+from src.eval.shared.prompt_format import BasePromptFormatter
+from src.eval.shared.prompt_format import HuggingFaceChatPromptFormatter
+from src.eval.shared.prompt_format import NativeChatPromptFormatter
+from src.eval.shared.prompt_format import build_hf_prompt_formatter
+from src.eval.shared.prompt_format import build_native_prompt_formatter
 from src.eval.shared.scorer_loader import resolve_backend
 from src.eval.jmmlu.runtime import evaluate_examples
 from src.eval.jmmlu.runtime import save_result
@@ -28,6 +33,9 @@ from src.eval.jmmlu.scoring import build_prompt
 class FakeTokenizer:
     pad_token = "|<pad>|"
     bos_token = "|<bos>|"
+    user_token = "|<user>|"
+    assistant_token = "|<assistant>|"
+    end_of_turn_token = "|<end_of_turn>|"
 
     def __init__(self) -> None:
         # ---------------------------------------------------------
@@ -147,6 +155,50 @@ class FakeTransformersTokenizer:
             return encoded
 
         return {"input_ids": encoded["input_ids"]}
+
+
+class FakeChatTransformersTokenizer(FakeTransformersTokenizer):
+    chat_template = "template"
+
+    def __init__(self) -> None:
+        # ---------------------------------------------------------
+        # Record chat rendering and special-token settings used by
+        # the Transformers scoring path.
+        # ---------------------------------------------------------
+        self.messages: list[list[dict[str, str]]] = []
+        self.add_special_token_values: list[bool] = []
+        self.assert_template_arguments: tuple[bool, bool] | None = None
+
+    def apply_chat_template(
+        self,
+        conversation: list[dict[str, str]],
+        tokenize: bool,
+        add_generation_prompt: bool,
+    ) -> str:
+        # ---------------------------------------------------------
+        # Render a small deterministic prompt while recording the
+        # standard Hugging Face chat template arguments.
+        # ---------------------------------------------------------
+        self.messages.append(conversation)
+        self.assert_template_arguments = (tokenize, add_generation_prompt)
+        return f"<user>{conversation[0]['content']}<assistant>"
+
+    def __call__(
+        self,
+        text: str,
+        add_special_tokens: bool = True,
+        return_offsets_mapping: bool = False,
+    ) -> dict[str, list[int] | list[tuple[int, int]]]:
+        # ---------------------------------------------------------
+        # Keep the parent encoding behavior and record whether the
+        # scorer tries to add model special tokens again.
+        # ---------------------------------------------------------
+        self.add_special_token_values.append(add_special_tokens)
+        return super().__call__(
+            text=text,
+            add_special_tokens=add_special_tokens,
+            return_offsets_mapping=return_offsets_mapping,
+        )
 
 
 class FakeTransformersOutput:
@@ -323,6 +375,70 @@ class JmmluEvalTest(unittest.TestCase):
 
         self.assertEqual(args.model, "Qwen/Qwen3-0.6B")
         self.assertEqual(args.backend, "hf")
+        self.assertEqual(args.prompt_format, "auto")
+
+    def test_native_prompt_format_uses_model_metadata(self) -> None:
+        # ---------------------------------------------------------
+        # Select Lambda chat formatting only when native model
+        # metadata declares the supported template version.
+        # ---------------------------------------------------------
+        tokenizer = FakeTokenizer()
+        base_formatter = build_native_prompt_formatter(
+            prompt_format="auto",
+            tokenizer=tokenizer,
+            model_config={},
+        )
+        chat_formatter = build_native_prompt_formatter(
+            prompt_format="auto",
+            tokenizer=tokenizer,
+            model_config={"chat_template_version": 1},
+        )
+
+        self.assertIsInstance(base_formatter, BasePromptFormatter)
+        self.assertIsInstance(chat_formatter, NativeChatPromptFormatter)
+        self.assertEqual(
+            chat_formatter.format(prompt="Question").text,
+            "|<user>|Question|<end_of_turn>||<assistant>|",
+        )
+
+    def test_native_prompt_format_rejects_missing_or_unknown_template(self) -> None:
+        # ---------------------------------------------------------
+        # Reject forced chat formatting without metadata and any
+        # unsupported native template version.
+        # ---------------------------------------------------------
+        tokenizer = FakeTokenizer()
+
+        with self.assertRaises(ValueError):
+            build_native_prompt_formatter(
+                prompt_format="chat",
+                tokenizer=tokenizer,
+                model_config={},
+            )
+
+        with self.assertRaises(ValueError):
+            build_native_prompt_formatter(
+                prompt_format="auto",
+                tokenizer=tokenizer,
+                model_config={"chat_template_version": 2},
+            )
+
+    def test_hf_prompt_format_uses_tokenizer_metadata(self) -> None:
+        # ---------------------------------------------------------
+        # Select a Hugging Face chat template in auto mode and keep
+        # explicit base formatting available.
+        # ---------------------------------------------------------
+        tokenizer = FakeChatTransformersTokenizer()
+        chat_formatter = build_hf_prompt_formatter(prompt_format="auto", tokenizer=tokenizer)
+        base_formatter = build_hf_prompt_formatter(prompt_format="base", tokenizer=tokenizer)
+
+        self.assertIsInstance(chat_formatter, HuggingFaceChatPromptFormatter)
+        self.assertIsInstance(base_formatter, BasePromptFormatter)
+
+        with self.assertRaises(ValueError):
+            build_hf_prompt_formatter(
+                prompt_format="chat",
+                tokenizer=FakeTransformersTokenizer(),
+            )
 
     def test_resolve_backend_detects_native_model_artifacts(self) -> None:
         # ---------------------------------------------------------
@@ -433,6 +549,52 @@ class JmmluEvalTest(unittest.TestCase):
 
         self.assertEqual(len(losses), 4)
         self.assertEqual(min(range(len(losses)), key=lambda index: losses[index]), 0)
+
+    def test_transformers_chat_scorer_avoids_duplicate_special_tokens(self) -> None:
+        # ---------------------------------------------------------
+        # Apply the tokenizer-owned chat template once and score the
+        # assistant label without adding another BOS token.
+        # ---------------------------------------------------------
+        tokenizer = FakeChatTransformersTokenizer()
+        scorer = TransformersChoiceScorer(
+            model=FakeTransformersModel(),
+            tokenizer=tokenizer,
+            device=torch.device("cpu"),
+            model_source="fake/chat",
+            torch_dtype_name="auto",
+            prompt_formatter=HuggingFaceChatPromptFormatter(tokenizer=tokenizer),
+        )
+
+        losses = scorer.score_continuations(prompt="Question:", continuations=("A",))
+
+        self.assertEqual(len(losses), 1)
+        self.assertEqual(tokenizer.messages, [[{"role": "user", "content": "Question:"}]])
+        self.assertEqual(tokenizer.assert_template_arguments, (False, True))
+        self.assertEqual(tokenizer.add_special_token_values, [False])
+
+    def test_native_chat_scorer_masks_template_and_prompt_tokens(self) -> None:
+        # ---------------------------------------------------------
+        # Score only the assistant answer while masking Lambda chat
+        # markers and user prompt tokens.
+        # ---------------------------------------------------------
+        model = FakeModel()
+        tokenizer = FakeTokenizer()
+        scorer = NativeChoiceScorer(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=128,
+            pad_token_id=0,
+            bos_token_id=1,
+            device=torch.device("cpu"),
+            model_source="models/chat",
+            torch_dtype_name="auto",
+            prompt_formatter=NativeChatPromptFormatter(tokenizer=tokenizer),
+        )
+
+        scorer.score_continuations(prompt="Q", continuations=("A",))
+
+        self.assertEqual(model.labels[-1][-1], ord("A"))
+        self.assertTrue(all(token_id == 0 for token_id in model.labels[-1][:-1]))
 
     def test_transformers_choice_scorer_tokenizes_full_continuation_text(self) -> None:
         # ---------------------------------------------------------

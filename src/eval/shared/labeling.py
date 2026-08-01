@@ -8,12 +8,20 @@ def pad_token_row(token_ids: list[int], max_len: int, pad_token_id: int) -> list
     return [*token_ids, *[pad_token_id for _ in range(max_len - len(token_ids))]]
 
 
-def encode_hf_text(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
+def encode_hf_text(
+    tokenizer: Any,
+    text: str,
+    add_special_tokens: bool = True,
+) -> tuple[list[int], list[tuple[int, int]]]:
     # ---------------------------------------------------------
     # Keep token ids and source text ranges from the same full
     # encoding so boundary merges are handled correctly.
     # ---------------------------------------------------------
-    encoded = tokenizer(text, add_special_tokens=True, return_offsets_mapping=True)
+    encoded = tokenizer(
+        text,
+        add_special_tokens=add_special_tokens,
+        return_offsets_mapping=True,
+    )
     token_ids = [int(token_id) for token_id in encoded["input_ids"]]
     offsets = [(int(start), int(end)) for start, end in encoded["offset_mapping"]]
     return token_ids, offsets
