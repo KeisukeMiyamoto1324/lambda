@@ -130,6 +130,16 @@ class FakeStreamingDataset:
 
 
 class PosttrainingModelSetupTest(unittest.TestCase):
+    def test_parse_args_uses_default_max_steps(self) -> None:
+        # ---------------------------------------------------------
+        # Keep the default posttraining duration aligned with the
+        # configured full training run.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["train.py"]):
+            args = parse_args()
+
+        self.assertEqual(args.max_steps, 5000)
+
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject invalid values before model download, dataset loading,
@@ -139,7 +149,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ("--max-len", "0"),
             ("--learning-rate", "0"),
             ("--lr-warmup-steps", "-1"),
-            ("--lr-warmup-steps", "1024"),
+            ("--lr-warmup-steps", "5000"),
             ("--min-learning-rate-ratio", "1.1"),
             ("--batch-size", "0"),
             ("--gradient-accumulation-steps", "0"),
