@@ -16,6 +16,7 @@ from src.posttraining.cli import parse_args
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.dataloaders import PACKING_VERSION
 from src.posttraining.dataloaders import SHUFFLE_SEED
+from src.posttraining.dataset import LAMBDA_CHAT_DATASET_PATH
 from src.posttraining.model_setup import build_tokenizer
 from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
@@ -51,10 +52,12 @@ def main() -> None:
     base_model_dir = download_base_model(base_model_id=args.base_model_id)
     tokenizer = build_tokenizer(base_model_dir=base_model_dir, output_path=model_dir)
     validation_sample_count = args.batch_size * args.val_batches * device_count
-    default_validation_cache_path = (
-        model_dir
-        / f"validation-cache-{PACKING_VERSION}-len{args.max_len}-samples{validation_sample_count}.pt"
+    dataset_name = LAMBDA_CHAT_DATASET_PATH.rsplit("/", maxsplit=1)[-1]
+    validation_cache_name = (
+        f"validation-cache-{dataset_name}-{PACKING_VERSION}-"
+        f"len{args.max_len}-samples{validation_sample_count}.pt"
     )
+    default_validation_cache_path = model_dir / validation_cache_name
     validation_cache_path = (
         Path(args.validation_cache_path) if args.validation_cache_path else default_validation_cache_path
     )

@@ -339,8 +339,14 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
         self.assertEqual(payload["training_max_len"], 8)
         self.assertEqual(payload["trainable_layers"], "all")
-        self.assertEqual(payload["posttraining_datasets"], ["KeisukeMiyamoto/lambda-chat:train"])
-        self.assertEqual(payload["validation_dataset"], "KeisukeMiyamoto/lambda-chat:validation")
+        self.assertEqual(
+            payload["posttraining_datasets"],
+            ["KeisukeMiyamoto/SyntheticTalk-jp:train"],
+        )
+        self.assertEqual(
+            payload["validation_dataset"],
+            "KeisukeMiyamoto/SyntheticTalk-jp:validation",
+        )
         self.assertEqual(payload["posttraining_steps"], 9)
         self.assertEqual(payload["devices"], "auto")
         self.assertEqual(payload["device_count"], 1)
@@ -388,7 +394,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         messages = mocked_build.call_args.kwargs["messages"]
         mocked_load.assert_called_once_with(
-            path="KeisukeMiyamoto/lambda-chat",
+            path="KeisukeMiyamoto/SyntheticTalk-jp",
             split="train",
             streaming=True,
         )

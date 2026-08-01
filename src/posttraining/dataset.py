@@ -12,7 +12,7 @@ from src.shared.packed_dataset import PackedTrainingExample
 from src.shared.tokenizer import ByteLevelBPE
 
 
-LAMBDA_CHAT_DATASET_PATH = "KeisukeMiyamoto/lambda-chat"
+LAMBDA_CHAT_DATASET_PATH = "KeisukeMiyamoto/SyntheticTalk-jp"
 LAMBDA_CHAT_TRAIN_SPLIT = "train"
 LAMBDA_CHAT_VALIDATION_SPLIT = "validation"
 
