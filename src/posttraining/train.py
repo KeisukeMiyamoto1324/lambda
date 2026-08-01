@@ -21,6 +21,7 @@ from src.posttraining.model_setup import build_tokenizer
 from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.trainer import train_stage
+from src.shared.device_utils import is_global_zero_process
 from src.shared.device_utils import resolve_accelerator
 from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
@@ -28,6 +29,7 @@ from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
+from src.shared.training_token_budget import show_training_token_budget
 load_dotenv()
 
 
@@ -91,6 +93,20 @@ def main() -> None:
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
     )
+
+    # ---------------------------------------------------------
+    # Print the planned context-token budget and its ratio to the
+    # model size once before the training loop starts.
+    # ---------------------------------------------------------
+    if is_global_zero_process():
+        show_training_token_budget(
+            max_steps=args.max_steps,
+            batch_size=args.batch_size,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            device_count=device_count,
+            max_len=args.max_len,
+            parameter_count=sum(parameter.numel() for parameter in model.parameters()),
+        )
 
     if args.continue_from_model:
         model_state = torch.load(
