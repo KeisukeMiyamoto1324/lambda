@@ -26,6 +26,7 @@ from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_strategy
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.float8_training import convert_model_to_float8_training
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
 from src.shared.training_token_budget import show_training_token_budget
@@ -111,9 +112,10 @@ def main() -> None:
         model.load_state_dict(model_state)
 
     # ---------------------------------------------------------
-    # Compile the fixed-shape Transformer body after loading optional
-    # continuation weights and before Lightning starts the stage.
+    # Convert the large decoder projections to tensorwise FP8, then
+    # compile after loading optional continuation weights.
     # ---------------------------------------------------------
+    model = convert_model_to_float8_training(model=model)
     model = compile_training_model(model=model)
 
     args.posttraining_steps = args.max_steps

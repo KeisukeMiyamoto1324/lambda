@@ -36,6 +36,9 @@ from src.pretraining.training_corpus_cases import serialize_pretraining_corpus_c
 from src.shared.tokenizer import ByteLevelBPE
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.float8_training import convert_model_to_float8_training
+from src.shared.model.float8_training import FLOAT8_RECIPE
+from src.shared.model.float8_training import TRAINING_PRECISION
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -215,9 +218,10 @@ def main() -> None:
         model.load_state_dict(model_state)
 
     # ---------------------------------------------------------
-    # Compile the fixed-shape Transformer body after all initial
-    # weights have been loaded into the base module.
+    # Convert the large decoder projections to tensorwise FP8, then
+    # compile the fixed-shape body after all weights are loaded.
     # ---------------------------------------------------------
+    model = convert_model_to_float8_training(model=model)
     model = compile_training_model(model=model)
 
     # ---------------------------------------------------------
@@ -341,6 +345,8 @@ def main() -> None:
         "base_shuffle_seed": SHUFFLE_SEED,
         "shuffle_seed": shuffle_seed,
         "trained_steps": trainer.global_step,
+        "training_precision": TRAINING_PRECISION,
+        "float8_recipe": FLOAT8_RECIPE,
     }
 
     with open(model_dir / "model_config.json", "w") as f:

@@ -353,6 +353,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             "KeisukeMiyamoto/SyntheticTalk-jp:validation",
         )
         self.assertEqual(payload["posttraining_steps"], 9)
+        self.assertEqual(payload["training_precision"], "fp8")
+        self.assertEqual(payload["float8_recipe"], "tensorwise")
         self.assertEqual(payload["devices"], "auto")
         self.assertEqual(payload["device_count"], 1)
         self.assertEqual(payload["global_batch_size"], 16)

@@ -8,6 +8,8 @@ from src.posttraining.dataset import LAMBDA_CHAT_DATASET_PATH
 from src.posttraining.dataset import LAMBDA_CHAT_TRAIN_SPLIT
 from src.posttraining.dataset import LAMBDA_CHAT_VALIDATION_SPLIT
 from src.shared.model.transformer import DecoderOnlyTransformer
+from src.shared.model.float8_training import FLOAT8_RECIPE
+from src.shared.model.float8_training import TRAINING_PRECISION
 
 
 def save_chat_model(
@@ -63,6 +65,8 @@ def save_chat_model(
         "validation_cache_path": args.validation_cache_path,
         "validation_sample_count": args.validation_sample_count,
         "posttraining_steps": args.posttraining_steps,
+        "training_precision": TRAINING_PRECISION,
+        "float8_recipe": FLOAT8_RECIPE,
     }
 
     with open(model_dir / "model_config.json", "w") as f:

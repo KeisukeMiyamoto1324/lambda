@@ -22,6 +22,9 @@ from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.float8_training import convert_model_to_float8_training
+from src.shared.model.float8_training import FLOAT8_RECIPE
+from src.shared.model.float8_training import TRAINING_PRECISION
 from src.shared.packed_dataset import build_tokenized_cache
 from src.shared.packed_dataset import LocalTokenizedDataset
 from src.shared.packed_dataset import PackedCorpusDataset
@@ -182,9 +185,10 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Compile the fixed-shape Transformer body while preserving the
-    # artifact-compatible loss and model-saving paths.
+    # Convert the large decoder projections to tensorwise FP8 before
+    # compiling the artifact-compatible Transformer body.
     # ---------------------------------------------------------
+    model = convert_model_to_float8_training(model=model)
     model = compile_training_model(model=model)
 
     # ---------------------------------------------------------
@@ -298,6 +302,8 @@ def main() -> None:
         "base_shuffle_seed": SHUFFLE_SEED,
         "shuffle_seed": shuffle_seed,
         "trained_steps": trainer.global_step,
+        "training_precision": TRAINING_PRECISION,
+        "float8_recipe": FLOAT8_RECIPE,
     }
 
     # ---------------------------------------------------------
