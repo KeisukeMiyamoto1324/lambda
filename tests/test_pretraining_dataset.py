@@ -14,7 +14,8 @@ from src.pretraining.dataset import build_tokenized_cache
 from src.pretraining.dataset import LocalTokenizedDataset
 from src.pretraining.dataset import PretrainingCorpusDataset
 from src.pretraining.training_corpus_cases import PretrainingCorpusCase
-from src.pretraining.training_corpus_cases import PRETRAINING_CORPUS_CASE
+from src.pretraining.training_corpus_cases import PRETRAINING_TRAIN_CORPUS_CASE
+from src.pretraining.training_corpus_cases import PRETRAINING_VALIDATION_CORPUS_CASE
 
 
 class FixedTokenDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]):
@@ -131,24 +132,30 @@ def build_case(
 
 
 class PretrainingDatasetTest(unittest.TestCase):
-    def test_pretraining_corpus_case_uses_cleaned_fineweb2_edu_jp(self) -> None:
+    def test_pretraining_corpus_cases_use_lambda_corpus_splits(self) -> None:
         # ---------------------------------------------------------
-        # Keep pretraining pointed only at the requested Japanese
-        # FineWeb dataset.
+        # Use the complete registered train and validation splits
+        # from the shared Japanese pretraining corpus.
         # ---------------------------------------------------------
         self.assertEqual(
             (
-                PRETRAINING_CORPUS_CASE.name,
-                PRETRAINING_CORPUS_CASE.dataset_path,
-                PRETRAINING_CORPUS_CASE.config_name,
-                PRETRAINING_CORPUS_CASE.split,
-                PRETRAINING_CORPUS_CASE.text_column,
+                PRETRAINING_TRAIN_CORPUS_CASE.dataset_path,
+                PRETRAINING_TRAIN_CORPUS_CASE.config_name,
+                PRETRAINING_TRAIN_CORPUS_CASE.split,
+                PRETRAINING_TRAIN_CORPUS_CASE.text_column,
+                PRETRAINING_VALIDATION_CORPUS_CASE.dataset_path,
+                PRETRAINING_VALIDATION_CORPUS_CASE.config_name,
+                PRETRAINING_VALIDATION_CORPUS_CASE.split,
+                PRETRAINING_VALIDATION_CORPUS_CASE.text_column,
             ),
             (
-                "cleaned-fineweb2-edu-jp",
-                "KeisukeMiyamoto/CleanedFineWeb2Edu-jp",
+                "KeisukeMiyamoto/lambda-corpus",
                 "default",
                 "train",
+                "text",
+                "KeisukeMiyamoto/lambda-corpus",
+                "default",
+                "validation",
                 "text",
             ),
         )
@@ -178,6 +185,35 @@ class PretrainingDatasetTest(unittest.TestCase):
             )
         )
         self.assertIn(split_index, dataset.split_indexes)
+
+    def test_complete_corpus_split_skips_document_partitioning(self) -> None:
+        # ---------------------------------------------------------
+        # Avoid hashing every document when the complete registered
+        # source split is used for training or validation.
+        # ---------------------------------------------------------
+        dataset = PretrainingCorpusDataset(
+            corpus_case=build_case(name="custom"),
+            tokenizer=FixedTokenizer(),
+            max_len=2,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+        )
+        fake_dataset = FakeStreamingDataset(
+            samples=[{"text": "10"}, {"text": "20"}]
+        )
+
+        with (
+            patch("src.shared.packed_dataset.load_dataset", return_value=fake_dataset),
+            patch.object(dataset, "_contains_partition") as contains_partition,
+        ):
+            examples = list(dataset)
+
+        self.assertEqual(
+            sorted(example[0][1].item() for example in examples),
+            [10, 20],
+        )
+        contains_partition.assert_not_called()
 
     def test_pretraining_corpus_does_not_manually_split_workers(self) -> None:
         # ---------------------------------------------------------
@@ -531,13 +567,16 @@ class PretrainingDatasetTest(unittest.TestCase):
                 path=path,
                 num_samples=2,
                 max_len=2,
-                metadata={"corpus_signature": "abc123"},
+                metadata={"validation_dataset_signature": "abc123"},
             )
             payload = torch.load(path, map_location="cpu")
 
         self.assertEqual(payload["metadata"]["num_samples"], 2)
         self.assertEqual(payload["metadata"]["max_len"], 2)
-        self.assertEqual(payload["metadata"]["corpus_signature"], "abc123")
+        self.assertEqual(
+            payload["metadata"]["validation_dataset_signature"],
+            "abc123",
+        )
         self.assertTrue(torch.equal(payload["position_ids"][0], torch.tensor([0, 1])))
         self.assertTrue(torch.equal(payload["segment_ids"][0], torch.tensor([0, -1])))
 
@@ -556,7 +595,7 @@ class PretrainingDatasetTest(unittest.TestCase):
                         path=path,
                         num_samples=2,
                         max_len=2,
-                        metadata={"corpus_signature": "abc123"},
+                        metadata={"validation_dataset_signature": "abc123"},
                     )
 
             self.assertFalse(path.exists())
@@ -574,7 +613,7 @@ class PretrainingDatasetTest(unittest.TestCase):
                 path=path,
                 num_samples=2,
                 max_len=2,
-                metadata={"corpus_signature": "abc123"},
+                metadata={"validation_dataset_signature": "abc123"},
             )
 
             with self.assertRaises(ValueError):
@@ -582,7 +621,7 @@ class PretrainingDatasetTest(unittest.TestCase):
                     path=path,
                     max_len=2,
                     num_samples=2,
-                    metadata={"corpus_signature": "def456"},
+                    metadata={"validation_dataset_signature": "def456"},
                 )
 
 

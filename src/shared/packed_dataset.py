@@ -249,14 +249,15 @@ class PackedCorpusDataset(IterableDataset[PackedTrainingExample]):
         dataset = dataset.reshard()
 
         # ---------------------------------------------------------
-        # Route each streamed document through the deterministic
-        # train-validation split before optional training shuffle.
+        # Apply deterministic document partitioning only when the
+        # caller requests less than the complete source split.
         # ---------------------------------------------------------
-        dataset = dataset.filter(
-            lambda sample: self._contains_partition(
-                sample=sample,
+        if self.split_indexes != tuple(range(self.split_modulo)):
+            dataset = dataset.filter(
+                lambda sample: self._contains_partition(
+                    sample=sample,
+                )
             )
-        )
 
         # ---------------------------------------------------------
         # Use the same pass seed in every process. HF distributed

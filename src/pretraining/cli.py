@@ -24,8 +24,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=40960)
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--val-split-modulo", type=int, default=100)
-    parser.add_argument("--val-split-index", type=int, default=0)
     parser.add_argument("--val-batches", type=int, default=64)
     parser.add_argument("--validation-cache-path", type=str, default="")
     parser.add_argument("--val-check-interval", type=int, default=1000)
@@ -63,11 +61,6 @@ def parse_args() -> argparse.Namespace:
         )
         require(args.max_steps > 0, "--max-steps must be greater than 0")
         require(args.num_workers >= 0, "--num-workers must be greater than or equal to 0")
-        require(args.val_split_modulo > 1, "--val-split-modulo must be greater than 1")
-        require(
-            0 <= args.val_split_index < args.val_split_modulo,
-            "--val-split-index must be within --val-split-modulo",
-        )
         require(args.val_batches > 0, "--val-batches must be greater than 0")
         require(args.val_check_interval > 0, "--val-check-interval must be greater than 0")
         require(args.checkpoint_every_n_steps > 0, "--checkpoint-every-n-steps must be greater than 0")

@@ -132,7 +132,6 @@ class PretrainingTrainTest(unittest.TestCase):
         invalid_cases = [
             ("--max-len", "0"),
             ("--batch-size", "0"),
-            ("--val-split-modulo", "0"),
             ("--val-batches", "0"),
             ("--val-check-interval", "0"),
             ("--checkpoint-every-n-steps", "0"),
@@ -148,6 +147,23 @@ class PretrainingTrainTest(unittest.TestCase):
             ]
 
             with self.subTest(flag=flag), patch("sys.argv", argv), patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parse_args()
+
+    def test_parse_args_rejects_removed_validation_split_options(self) -> None:
+        # ---------------------------------------------------------
+        # Reject obsolete hash split settings because pretraining
+        # now uses registered train and validation dataset splits.
+        # ---------------------------------------------------------
+        removed_options = ["--val-split-modulo", "--val-split-index"]
+
+        for option in removed_options:
+            argv = ["train.py", option, "1"]
+
+            with self.subTest(option=option), patch("sys.argv", argv), patch(
+                "sys.stderr",
+                io.StringIO(),
+            ):
                 with self.assertRaises(SystemExit):
                     parse_args()
 

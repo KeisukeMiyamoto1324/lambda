@@ -5,13 +5,24 @@ from src.shared.training_corpus import TrainingCorpusCase
 PretrainingCorpusCase = TrainingCorpusCase
 
 
-PRETRAINING_CORPUS_CASE = PretrainingCorpusCase(
-    name="cleaned-fineweb2-edu-jp",
-    genre="web",
+PRETRAINING_TRAIN_CORPUS_CASE = PretrainingCorpusCase(
+    name="lambda-corpus-train",
+    genre="mixed",
     language="ja",
-    dataset_path="KeisukeMiyamoto/CleanedFineWeb2Edu-jp",
+    dataset_path="KeisukeMiyamoto/lambda-corpus",
     config_name="default",
     split="train",
+    text_column="text",
+)
+
+
+PRETRAINING_VALIDATION_CORPUS_CASE = PretrainingCorpusCase(
+    name="lambda-corpus-validation",
+    genre="mixed",
+    language="ja",
+    dataset_path="KeisukeMiyamoto/lambda-corpus",
+    config_name="default",
+    split="validation",
     text_column="text",
 )
 
