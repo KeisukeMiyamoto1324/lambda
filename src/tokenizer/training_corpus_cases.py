@@ -16,10 +16,10 @@ class TrainingCorpusCase:
 
 TRAINING_CORPUS_CASES = [
     TrainingCorpusCase(
-        name="fineweb2-edu-ja",
-        genre="web",
+        name="lambda-corpus",
+        genre="mixed",
         language="ja",
-        dataset_path="hotchpotch/fineweb-2-edu-japanese",
+        dataset_path="KeisukeMiyamoto/lambda-corpus",
         config_name="default",
         split="train",
         text_column="text",
