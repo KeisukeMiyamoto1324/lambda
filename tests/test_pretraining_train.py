@@ -73,14 +73,10 @@ class PretrainingTrainTest(unittest.TestCase):
         first_input = torch.randn((1, 2, 8), dtype=torch.float32)
         _, first_cache = attention.forward_with_cache(
             first_input,
-            first_input,
-            first_input,
             past_key_value=None,
         )
         next_input = torch.randn((1, 1, 8), dtype=torch.float32)
         _, next_cache = attention.forward_with_cache(
-            next_input,
-            next_input,
             next_input,
             past_key_value=first_cache,
             position_offset=2,
@@ -206,12 +202,12 @@ class PretrainingTrainTest(unittest.TestCase):
         decay_parameter_ids = {id(parameter) for parameter in decay_group["params"]}
         no_decay_parameter_ids = {id(parameter) for parameter in no_decay_group["params"]}
 
-        self.assertIn(id(model.blocks[0].attention.W_q.weight), decay_parameter_ids)
-        self.assertIn(id(model.blocks[0].feed_forward.gate_proj.weight), decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].attention.qkv_proj.weight), decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.weight), decay_parameter_ids)
         self.assertIn(id(model.we.weight), no_decay_parameter_ids)
         self.assertIn(id(model.final_norm.weight), no_decay_parameter_ids)
         self.assertIn(id(model.blocks[0].norm_1.weight), no_decay_parameter_ids)
-        self.assertIn(id(model.blocks[0].feed_forward.gate_proj.bias), no_decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.bias), no_decay_parameter_ids)
 
     def test_resolve_warmup_cosine_learning_rate(self) -> None:
         # ---------------------------------------------------------

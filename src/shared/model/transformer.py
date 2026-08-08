@@ -19,21 +19,21 @@ class FeedForward(nn.Module):
         super().__init__()
 
         # ---------------------------------------------------------
-        # Use SwiGLU so each token is transformed through separate
-        # value and gate projections before returning to model width.
+        # Use one projection for SwiGLU gate and value channels before
+        # mapping the gated activations back to model width.
         # ---------------------------------------------------------
-        self.gate_proj = nn.Linear(in_features=d_model, out_features=d_ff)
-        self.up_proj = nn.Linear(in_features=d_model, out_features=d_ff)
+        self.gate_up_proj = nn.Linear(in_features=d_model, out_features=2 * d_ff)
         self.activation = nn.SiLU()
         self.down_proj = nn.Linear(in_features=d_ff, out_features=d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Activate the gate projection, multiply it with the value
-        # projection, and map the gated states back to model width.
+        # Split the fused projection, activate its gate channels, and
+        # map the gated values back to model width.
         # ---------------------------------------------------------
-        gate = self.activation(self.gate_proj(x))
-        value = self.up_proj(x)
+        gate_and_value = self.gate_up_proj(x)
+        gate, value = gate_and_value.chunk(2, dim=-1)
+        gate = self.activation(gate)
         return self.down_proj(gate * value)
 
 
@@ -73,8 +73,6 @@ class DecoderBlock(nn.Module):
         attention_input = self.norm_1(x)
         attention_output = self.attention(
             attention_input,
-            attention_input,
-            attention_input,
             is_causal=attention_mask is None,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -101,8 +99,6 @@ class DecoderBlock(nn.Module):
         # ---------------------------------------------------------
         attention_input = self.norm_1(x)
         attention_output, key_value_cache = self.attention.forward_with_cache(
-            attention_input,
-            attention_input,
             attention_input,
             past_key_value,
             is_causal=past_key_value is None,

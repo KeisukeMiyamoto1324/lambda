@@ -30,12 +30,10 @@ class Attention(nn.Module):
         )
 
         # ---------------------------------------------------------
-        # Project inputs into query, key, and value spaces and merge
-        # the heads back into the model dimension after attention.
+        # Project self-attention inputs into query, key, and value
+        # spaces with one matrix multiplication.
         # ---------------------------------------------------------
-        self.W_q = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
-        self.W_k = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
-        self.W_v = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
+        self.qkv_proj = nn.Linear(in_features=d_model, out_features=3 * d_model, bias=False)
         self.W_o = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
 
     def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
@@ -58,20 +56,17 @@ class Attention(nn.Module):
 
     def forward(
         self,
-        encoding_for_q: torch.Tensor,
-        encoding_for_k: torch.Tensor,
-        encoding_for_v: torch.Tensor,
+        x: torch.Tensor,
         is_causal: bool = False,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Create the projected queries, keys, and values for each
-        # attention head from the incoming hidden states.
+        # Create queries, keys, and values with one projection before
+        # separating their attention heads.
         # ---------------------------------------------------------
-        q = self._split_heads(self.W_q(encoding_for_q))
-        k = self._split_heads(self.W_k(encoding_for_k))
-        v = self._split_heads(self.W_v(encoding_for_v))
+        qkv = self.qkv_proj(x)
+        q, k, v = [self._split_heads(projection) for projection in qkv.chunk(3, dim=-1)]
 
         # ---------------------------------------------------------
         # Apply rotary positions to queries and keys before the
@@ -101,9 +96,7 @@ class Attention(nn.Module):
 
     def forward_with_cache(
         self,
-        encoding_for_q: torch.Tensor,
-        encoding_for_k: torch.Tensor,
-        encoding_for_v: torch.Tensor,
+        x: torch.Tensor,
         past_key_value: LayerKeyValueCache | None,
         is_causal: bool = False,
         position_offset: int = 0,
@@ -112,9 +105,11 @@ class Attention(nn.Module):
         # Project the current tokens and append previous keys and
         # values so generation can avoid recomputing old states.
         # ---------------------------------------------------------
-        q = self._split_heads(self.W_q(encoding_for_q))
-        current_k = self._split_heads(self.W_k(encoding_for_k))
-        current_v = self._split_heads(self.W_v(encoding_for_v))
+        qkv = self.qkv_proj(x)
+        q, current_k, current_v = [
+            self._split_heads(projection)
+            for projection in qkv.chunk(3, dim=-1)
+        ]
 
         # ---------------------------------------------------------
         # Rotate only the newly projected queries and keys. Cached
