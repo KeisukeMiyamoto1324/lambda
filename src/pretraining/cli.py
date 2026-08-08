@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-check-interval", type=int, default=10000)
     parser.add_argument("--checkpoint-every-n-steps", type=int, default=20000)
     parser.add_argument("--metric-log-every-n-steps", type=int, default=500)
-    parser.add_argument("--loss-chunk-size", type=int, default=32)
+    parser.add_argument("--loss-chunk-size", type=int, default=16)
     parser.add_argument("--devices", type=str, default="auto")
     parser.add_argument("--tokenizer-path", type=str, default="models/tokenizer")
     parser.add_argument("--output-path", type=str, default="models/lambda-160m")
