@@ -23,6 +23,7 @@ from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
+from src.shared.model.compilation import compile_training_model
 from src.shared.packed_dataset import build_tokenized_cache
 from src.shared.packed_dataset import LocalTokenizedDataset
 from src.shared.packed_dataset import PackedCorpusDataset
@@ -185,6 +186,12 @@ def main() -> None:
         min_learning_rate=min_learning_rate,
     )
     model.loss_chunk_size = args.loss_chunk_size
+
+    # ---------------------------------------------------------
+    # Compile the fixed-shape Transformer body while preserving the
+    # artifact-compatible loss and model-saving paths.
+    # ---------------------------------------------------------
+    model = compile_training_model(model=model)
 
     # ---------------------------------------------------------
     # Print the planned context-token budget and its ratio to the

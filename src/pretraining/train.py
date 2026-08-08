@@ -37,6 +37,7 @@ from src.pretraining.training_corpus_cases import PretrainingCorpusCase
 from src.pretraining.training_corpus_cases import serialize_pretraining_corpus_case
 from src.shared.tokenizer import ByteLevelBPE
 from src.shared.model.transformer import DecoderOnlyTransformer
+from src.shared.model.compilation import compile_training_model
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -218,6 +219,12 @@ def main() -> None:
             weights_only=True,
         )
         model.load_state_dict(model_state)
+
+    # ---------------------------------------------------------
+    # Compile the fixed-shape Transformer body after all initial
+    # weights have been loaded into the base module.
+    # ---------------------------------------------------------
+    model = compile_training_model(model=model)
 
     # ---------------------------------------------------------
     # Save both periodic checkpoints and the best validation model

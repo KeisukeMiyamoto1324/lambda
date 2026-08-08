@@ -8,6 +8,7 @@ import torch
 
 from src.pretraining.cli import parse_args
 from src.shared.model.position_encoding import RotaryPositionEmbedding
+from src.shared.model.compilation import compile_training_model
 from src.shared.model.self_attention import Attention
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.transformer import build_packed_attention_mask
@@ -15,6 +16,54 @@ from src.shared.model.transformer import resolve_warmup_cosine_learning_rate
 
 
 class PretrainingTrainTest(unittest.TestCase):
+    def test_compile_training_model_preserves_state_dict_and_compiles_body(self) -> None:
+        # ---------------------------------------------------------
+        # Keep artifact keys and the chunked loss path unchanged while
+        # compiling only the Transformer hidden-state calculation.
+        # ---------------------------------------------------------
+        model = DecoderOnlyTransformer(
+            num_tokens=12,
+            d_model=8,
+            max_len=8,
+            num_layers=1,
+            num_heads=2,
+            d_ff=16,
+            pad_token_id=0,
+            loss_chunk_size=4,
+        )
+        state_dict_keys = list(model.state_dict())
+        torch_compile = torch.compile
+
+        with patch(
+            "src.shared.model.compilation.torch.compile",
+            side_effect=lambda target, **_: torch_compile(target, backend="eager", dynamic=False),
+        ) as mocked_compile:
+            compiled_model = compile_training_model(model=model)
+
+        self.assertIs(compiled_model, model)
+        self.assertEqual(list(compiled_model.state_dict()), state_dict_keys)
+        self.assertIsNone(compiled_model._compiler_ctx)
+        self.assertTrue(hasattr(compiled_model.forward_hidden, "_torchdynamo_orig_callable"))
+        self.assertEqual(
+            mocked_compile.call_args.kwargs,
+            {"mode": "max-autotune-no-cudagraphs", "dynamic": False},
+        )
+
+        input_tokens = torch.randint(1, 12, (2, 8))
+        labels = torch.randint(1, 12, (2, 8))
+        position_ids = torch.arange(8).expand(2, -1)
+        segment_ids = torch.zeros((2, 8), dtype=torch.long)
+
+        loss = compiled_model.compute_chunked_loss(
+            input_tokens=input_tokens,
+            labels=labels,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+        )
+
+        loss.backward()
+        self.assertTrue(torch.isfinite(loss))
+
     def test_rotary_position_embedding_keeps_shape_dtype_and_device(self) -> None:
         # ---------------------------------------------------------
         # Rotate query or key heads without changing the tensor

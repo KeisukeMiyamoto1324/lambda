@@ -27,6 +27,7 @@ from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
+from src.shared.model.compilation import compile_training_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
 from src.shared.training_token_budget import show_training_token_budget
@@ -115,6 +116,12 @@ def main() -> None:
             weights_only=True,
         )
         model.load_state_dict(model_state)
+
+    # ---------------------------------------------------------
+    # Compile the fixed-shape Transformer body after loading optional
+    # continuation weights and before Lightning starts the stage.
+    # ---------------------------------------------------------
+    model = compile_training_model(model=model)
 
     args.posttraining_steps = args.max_steps
     args.device_count = device_count
