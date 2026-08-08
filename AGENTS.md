@@ -1,20 +1,24 @@
 ## Coding Style
-- For Python, comments must be written for each processing block in the following format:
+- For Python, comments may be written for each processing block (NOT line by line) in the following format:
 
     # ---------------------------------------------------------
     # Comment here in English (up to 3 lines)
     # ---------------------------------------------------------
     Some code ...
 
-- Do NOT write doc string
-- Follow single responsible principal when you write code, create files and directries.
-- Do NOT create deep nesting.
+- Follow single responsible principal when create new files and directries.
 - All function arguments and return values must have type annotations.
-- Write code with as few conditional branches as possible, keeping the flow consistent and easy to read.
-- Use styles that keep code as simple as possible. For example, use list comprehensions like `[x for x in y]` to write concise and clear code.
-- Insert appropriate empty lines between processing blocks so each logical unit is easy to identify.
-- Do not write fallback logic, as it adds unnecessary complexity to the code.
+- Do NOT write doc string unless the user requests.
+- Avoid create deep nesting by using method other than creating functions.
+- NEVER write fallback logic, as it adds unnecessary complexity to the code.
+- Write main logic in main.py. Use str/ to organize architecture.
+
+## Testing
+- Use pytest for testing your code. Write test code under tests/ directory.
+
+## Libraries
+- You can freely install necessary libraries using pip3.
 
 ## Other
-- You can freely install libraries using pip3.
 - Please respond in Japanese.
+- ALWAYS make your answer SHORT and CONCISE. 
