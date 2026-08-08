@@ -9,7 +9,7 @@ from src.eval.shared.prompt_format import build_hf_prompt_formatter
 from src.eval.shared.prompt_format import build_native_prompt_formatter
 from src.eval.shared.scorer_types import ChoiceScorer
 from src.inference_base.generation import resolve_torch_dtype
-from src.shared.device_utils import resolve_device
+from src.shared.device_utils import CUDA_DEVICE
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.tokenizer import ByteLevelBPE
 
@@ -89,9 +89,8 @@ def load_native_choice_scorer(
         model_dir=model_dir,
         vocab_size=tokenizer.get_vocab_size(),
     )
-    device = resolve_device()
     torch_dtype = resolve_torch_dtype(torch_dtype=torch_dtype_name)
-    model = model.to(device=device)
+    model = model.to(device=CUDA_DEVICE)
 
     if torch_dtype is not None:
         model = model.to(dtype=torch_dtype)
@@ -108,7 +107,7 @@ def load_native_choice_scorer(
         max_seq_len=int(model_config["max_len"]),
         pad_token_id=tokenizer.token_to_id(tokenizer.pad_token),
         bos_token_id=tokenizer.token_to_id(tokenizer.bos_token),
-        device=device,
+        device=CUDA_DEVICE,
         model_source=model_source,
         torch_dtype_name=torch_dtype_name,
         prompt_formatter=prompt_formatter,
@@ -125,7 +124,6 @@ def load_transformers_choice_scorer(
     # Load a Hugging Face causal language model with Transformers
     # for external model comparison.
     # ---------------------------------------------------------
-    device = resolve_device()
     torch_dtype = resolve_torch_dtype(torch_dtype=torch_dtype_name)
     tokenizer = AutoTokenizer.from_pretrained(
         model_source,
@@ -136,7 +134,7 @@ def load_transformers_choice_scorer(
         dtype=torch_dtype,
         trust_remote_code=trust_remote_code,
     )
-    model = model.to(device=device)
+    model = model.to(device=CUDA_DEVICE)
     model.eval()
     prompt_formatter = build_hf_prompt_formatter(
         prompt_format=prompt_format,
@@ -145,7 +143,7 @@ def load_transformers_choice_scorer(
     return TransformersChoiceScorer(
         model=model,
         tokenizer=tokenizer,
-        device=device,
+        device=CUDA_DEVICE,
         model_source=model_source,
         torch_dtype_name=torch_dtype_name,
         prompt_formatter=prompt_formatter,

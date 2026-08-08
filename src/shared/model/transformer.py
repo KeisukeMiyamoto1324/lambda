@@ -127,8 +127,6 @@ class DecoderOnlyTransformer(L.LightningModule):
         d_ff: int = 8,
         learning_rate: float = 0.1,
         pad_token_id: int = 0,
-        use_fused_optimizer: bool = False,
-        use_fused_loss: bool = False,
         lr_warmup_steps: int | None = None,
         lr_total_steps: int | None = None,
         min_learning_rate: float | None = None,
@@ -165,8 +163,6 @@ class DecoderOnlyTransformer(L.LightningModule):
         self.fc_layer.weight = self.we.weight
         self.learning_rate = learning_rate
         self.pad_token_id = pad_token_id
-        self.use_fused_optimizer = use_fused_optimizer
-        self.use_fused_loss = use_fused_loss
         self.lr_warmup_steps = lr_warmup_steps
         self.lr_total_steps = lr_total_steps
         self.min_learning_rate = min_learning_rate
@@ -183,12 +179,10 @@ class DecoderOnlyTransformer(L.LightningModule):
             raise ValueError("LR schedule requires warmup steps, total steps, and minimum learning rate")
 
         # ---------------------------------------------------------
-        # Fuse vocabulary projection and cross entropy on CUDA while
-        # retaining the same explicit loss interface on other devices.
+        # Fuse vocabulary projection and cross entropy on CUDA.
         # ---------------------------------------------------------
         self.linear_cross_entropy = build_linear_cross_entropy_loss(
             ignore_index=pad_token_id,
-            use_fused_kernel=use_fused_loss,
         )
 
     def forward_hidden(
@@ -277,7 +271,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         optimizer = AdamW(
             parameter_groups,
             lr=self.learning_rate,
-            fused=self.use_fused_optimizer,
+            fused=True,
         )
 
         # ---------------------------------------------------------

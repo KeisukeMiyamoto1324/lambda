@@ -20,10 +20,8 @@ from src.shared.packed_dataset import build_tokenized_cache
 from src.shared.packed_dataset import LocalTokenizedDataset
 from src.shared.packed_dataset import PackedCorpusDataset
 from src.shared.device_utils import is_global_zero_process
-from src.shared.device_utils import resolve_accelerator
 from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
-from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
@@ -67,11 +65,9 @@ def main() -> None:
     # ---------------------------------------------------------
     args = parse_args()
     tokenizer = ByteLevelBPE.load(Path(args.tokenizer_path))
-    accelerator = resolve_accelerator()
     devices = resolve_devices(devices=args.devices)
-    device_count = resolve_device_count(accelerator=accelerator, devices=devices)
-    strategy = resolve_strategy(accelerator=accelerator, device_count=device_count)
-    precision = resolve_precision(accelerator=accelerator)
+    device_count = resolve_device_count(devices=devices)
+    strategy = resolve_strategy(device_count=device_count)
 
     # ---------------------------------------------------------
     # Create the output directory and resolve the tokenizer ids
@@ -163,14 +159,14 @@ def main() -> None:
         train_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=accelerator == "cuda",
+        pin_memory=True,
         persistent_workers=args.num_workers > 0,
     )
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=accelerator == "cuda",
+        pin_memory=True,
         persistent_workers=args.num_workers > 0,
     )
 
@@ -187,8 +183,6 @@ def main() -> None:
         d_ff=args.d_ff,
         learning_rate=args.learning_rate,
         pad_token_id=pad_token_id,
-        use_fused_optimizer=accelerator == "cuda",
-        use_fused_loss=accelerator == "cuda",
         lr_warmup_steps=args.lr_warmup_steps,
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
@@ -267,15 +261,14 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------
-    # Let Lightning place the model on CUDA or MPS when those
-    # backends are available and choose precision for that backend.
+    # Let Lightning place the model on the configured CUDA devices.
     # ---------------------------------------------------------
     strategy_kwargs = {"strategy": strategy} if strategy is not None else {}
     trainer = L.Trainer(
         max_steps=args.max_steps,
-        accelerator=accelerator,
+        accelerator="cuda",
         devices=devices,
-        precision=precision,
+        precision="bf16-mixed",
         callbacks=callbacks,
         logger=metrics_logger,
         accumulate_grad_batches=args.gradient_accumulation_steps,

@@ -23,7 +23,6 @@ def build_dataloaders(
     max_len: int,
     batch_size: int,
     num_workers: int,
-    accelerator: str,
     validation_cache_path: Path,
     validation_sample_count: int,
     shuffle_seed: int,
@@ -88,7 +87,6 @@ def build_dataloaders(
         num_samples=validation_sample_count,
         metadata=validation_cache_metadata,
     )
-    use_pin_memory = accelerator == "cuda"
     use_persistent_workers = num_workers > 0
 
     # ---------------------------------------------------------
@@ -99,14 +97,14 @@ def build_dataloaders(
         train_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=use_pin_memory,
+        pin_memory=True,
         persistent_workers=use_persistent_workers,
     )
     validation_dataloader = DataLoader(
         validation_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=use_pin_memory,
+        pin_memory=True,
         persistent_workers=use_persistent_workers,
     )
     return train_dataloader, validation_dataloader

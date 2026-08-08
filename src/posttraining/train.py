@@ -22,10 +22,8 @@ from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.trainer import train_stage
 from src.shared.device_utils import is_global_zero_process
-from src.shared.device_utils import resolve_accelerator
 from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
-from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.model.compilation import compile_training_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
@@ -37,16 +35,14 @@ load_dotenv()
 def main() -> None:
     # ---------------------------------------------------------
     # Parse CLI input, prepare output storage, and resolve the
-    # active accelerator configuration.
+    # requested CUDA device configuration.
     # ---------------------------------------------------------
     args = parse_args()
     model_dir = Path(args.output_path)
     model_dir.mkdir(parents=True, exist_ok=True)
-    accelerator = resolve_accelerator()
     devices = resolve_devices(devices=args.devices)
-    device_count = resolve_device_count(accelerator=accelerator, devices=devices)
-    strategy = resolve_strategy(accelerator=accelerator, device_count=device_count)
-    precision = resolve_precision(accelerator=accelerator)
+    device_count = resolve_device_count(devices=devices)
+    strategy = resolve_strategy(device_count=device_count)
 
     # ---------------------------------------------------------
     # Download base artifacts, prepare the validation cache, and set
@@ -73,7 +69,6 @@ def main() -> None:
         max_len=args.max_len,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        accelerator=accelerator,
         validation_cache_path=validation_cache_path,
         validation_sample_count=validation_sample_count,
         shuffle_seed=shuffle_seed,
@@ -88,7 +83,6 @@ def main() -> None:
         base_model_dir=base_model_dir,
         tokenizer=tokenizer,
         learning_rate=args.learning_rate,
-        accelerator=accelerator,
         lr_warmup_steps=args.lr_warmup_steps,
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
@@ -143,10 +137,8 @@ def main() -> None:
         max_steps=args.max_steps,
         train_dataloader=train_dataloader,
         validation_dataloader=validation_dataloader,
-        accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        precision=precision,
         args=args,
     )
 

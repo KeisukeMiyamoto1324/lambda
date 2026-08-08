@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from huggingface_hub import snapshot_download
 
 from src.shared.device_utils import is_global_zero_process
-from src.shared.device_utils import resolve_device
+from src.shared.device_utils import CUDA_DEVICE
 from src.shared.device_utils import wait_for_file
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.model.transformer import DecoderOnlyTransformer
@@ -74,7 +74,6 @@ def load_base_model(
     base_model_dir: Path,
     tokenizer: ByteLevelBPE,
     learning_rate: float,
-    accelerator: str,
     lr_warmup_steps: int | None = None,
     lr_total_steps: int | None = None,
     min_learning_rate: float | None = None,
@@ -87,15 +86,12 @@ def load_base_model(
         model_dir=base_model_dir,
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=learning_rate,
-        use_fused_optimizer=accelerator == "cuda",
-        use_fused_loss=accelerator == "cuda",
         lr_warmup_steps=lr_warmup_steps,
         lr_total_steps=lr_total_steps,
         min_learning_rate=min_learning_rate,
     )
-    model = model.to(resolve_device())
+    model = model.to(CUDA_DEVICE)
     model.learning_rate = learning_rate
-    model.use_fused_optimizer = accelerator == "cuda"
     model.train()
 
     # ---------------------------------------------------------

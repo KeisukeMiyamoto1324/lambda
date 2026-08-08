@@ -5,11 +5,11 @@ import unittest
 from unittest.mock import patch
 
 import torch
+import torch.nn.functional as F
 
 from src.pretraining.cli import parse_args
 from src.shared.model.position_encoding import RotaryPositionEmbedding
 from src.shared.model.compilation import compile_training_model
-from src.shared.model.linear_cross_entropy import TorchLinearCrossEntropyLoss
 from src.shared.model.self_attention import Attention
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.transformer import build_packed_attention_mask
@@ -50,16 +50,7 @@ class PretrainingTrainTest(unittest.TestCase):
         )
 
         input_tokens = torch.randint(1, 12, (2, 8))
-        labels = torch.randint(1, 12, (2, 8))
-        position_ids = torch.arange(8).expand(2, -1)
-        segment_ids = torch.zeros((2, 8), dtype=torch.long)
-
-        loss = compiled_model.compute_loss(
-            input_tokens=input_tokens,
-            labels=labels,
-            position_ids=position_ids,
-            segment_ids=segment_ids,
-        )
+        loss = compiled_model(input_tokens).sum()
 
         loss.backward()
         self.assertTrue(torch.isfinite(loss))
@@ -86,20 +77,23 @@ class PretrainingTrainTest(unittest.TestCase):
             num_heads=2,
             d_ff=16,
             pad_token_id=0,
-            use_fused_loss=True,
         ).cuda()
-        reference_loss_module = TorchLinearCrossEntropyLoss(ignore_index=0)
 
         # ---------------------------------------------------------
         # Backpropagate both implementations independently before
         # comparing the fused gradients with their PyTorch references.
         # ---------------------------------------------------------
         fused_loss = fused_model.linear_cross_entropy(weight, hidden_states, labels, bias)
-        reference_loss = reference_loss_module(
-            reference_weight,
+        reference_logits = F.linear(
             reference_hidden_states,
+            weight=reference_weight,
+            bias=reference_bias,
+        )
+        reference_loss = F.cross_entropy(
+            reference_logits,
             labels,
-            reference_bias,
+            ignore_index=0,
+            reduction="mean",
         )
         fused_loss.backward()
         reference_loss.backward()
@@ -371,6 +365,7 @@ class PretrainingTrainTest(unittest.TestCase):
             ],
         )
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for Liger kernels")
     def test_transformer_computes_loss_for_packed_batch(self) -> None:
         # ---------------------------------------------------------
         # Run one packed batch through the model using explicit
@@ -383,11 +378,11 @@ class PretrainingTrainTest(unittest.TestCase):
             num_heads=2,
             d_ff=16,
             pad_token_id=0,
-        )
-        input_tokens = torch.tensor([[1, 3, 1, 4]], dtype=torch.long)
-        labels = torch.tensor([[3, 2, 4, 2]], dtype=torch.long)
-        position_ids = torch.tensor([[0, 1, 0, 1]], dtype=torch.long)
-        segment_ids = torch.tensor([[0, 0, 1, 1]], dtype=torch.long)
+        ).cuda()
+        input_tokens = torch.tensor([[1, 3, 1, 4]], dtype=torch.long, device="cuda")
+        labels = torch.tensor([[3, 2, 4, 2]], dtype=torch.long, device="cuda")
+        position_ids = torch.tensor([[0, 1, 0, 1]], dtype=torch.long, device="cuda")
+        segment_ids = torch.tensor([[0, 0, 1, 1]], dtype=torch.long, device="cuda")
         loss = model.compute_loss(
             input_tokens=input_tokens,
             labels=labels,

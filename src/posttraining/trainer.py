@@ -15,8 +15,6 @@ def build_trainer(
     model_dir: Path,
     stage_name: str,
     max_steps: int,
-    accelerator: str,
-    precision: str,
     val_check_interval: int,
     val_batches: int,
     checkpoint_every_n_steps: int,
@@ -63,9 +61,9 @@ def build_trainer(
     strategy_kwargs = {"strategy": strategy} if strategy is not None else {}
     return L.Trainer(
         max_steps=max_steps,
-        accelerator=accelerator,
+        accelerator="cuda",
         devices=devices,
-        precision=precision,
+        precision="bf16-mixed",
         callbacks=callbacks,
         logger=metrics_logger,
         accumulate_grad_batches=gradient_accumulation_steps,
@@ -105,10 +103,8 @@ def train_stage(
     max_steps: int,
     train_dataloader: DataLoader,
     validation_dataloader: DataLoader,
-    accelerator: str,
     devices: int | str,
     strategy: str | None,
-    precision: str,
     args: argparse.Namespace,
 ) -> L.Trainer:
     # ---------------------------------------------------------
@@ -119,10 +115,8 @@ def train_stage(
         model_dir=model_dir,
         stage_name=stage_name,
         max_steps=max_steps,
-        accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        precision=precision,
         val_check_interval=args.val_check_interval,
         val_batches=args.val_batches,
         checkpoint_every_n_steps=args.checkpoint_every_n_steps,

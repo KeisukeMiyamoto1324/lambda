@@ -17,10 +17,8 @@ from src.midtraining.cli import parse_args
 from src.midtraining.training_corpus_cases import MIDTRAINING_CORPUS_CASE
 from src.midtraining.training_corpus_cases import serialize_midtraining_corpus_case
 from src.shared.device_utils import is_global_zero_process
-from src.shared.device_utils import resolve_accelerator
 from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
-from src.shared.device_utils import resolve_precision
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.model.compilation import compile_training_model
@@ -67,11 +65,9 @@ def main() -> None:
     source_model_config = load_model_config(model_dir=source_model_dir)
     max_len = int(source_model_config["max_len"] if args.max_len is None else args.max_len)
     tokenizer = ByteLevelBPE.load(source_model_dir)
-    accelerator = resolve_accelerator()
     devices = resolve_devices(devices=args.devices)
-    device_count = resolve_device_count(accelerator=accelerator, devices=devices)
-    strategy = resolve_strategy(accelerator=accelerator, device_count=device_count)
-    precision = resolve_precision(accelerator=accelerator)
+    device_count = resolve_device_count(devices=devices)
+    strategy = resolve_strategy(device_count=device_count)
     pad_token_id = tokenizer.token_to_id(tokenizer.pad_token)
     bos_token_id = tokenizer.token_to_id(tokenizer.bos_token)
     eos_token_id = tokenizer.token_to_id(tokenizer.eos_token)
@@ -160,14 +156,14 @@ def main() -> None:
         train_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=accelerator == "cuda",
+        pin_memory=True,
         persistent_workers=args.num_workers > 0,
     )
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=accelerator == "cuda",
+        pin_memory=True,
         persistent_workers=args.num_workers > 0,
     )
 
@@ -180,8 +176,6 @@ def main() -> None:
         vocab_size=tokenizer.get_vocab_size(),
         learning_rate=args.learning_rate,
         max_len=max_len,
-        use_fused_optimizer=accelerator == "cuda",
-        use_fused_loss=accelerator == "cuda",
         lr_warmup_steps=args.lr_warmup_steps,
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
@@ -244,9 +238,9 @@ def main() -> None:
     strategy_kwargs = {"strategy": strategy} if strategy is not None else {}
     trainer = L.Trainer(
         max_steps=args.max_steps,
-        accelerator=accelerator,
+        accelerator="cuda",
         devices=devices,
-        precision=precision,
+        precision="bf16-mixed",
         callbacks=callbacks,
         logger=metrics_logger,
         accumulate_grad_batches=args.gradient_accumulation_steps,

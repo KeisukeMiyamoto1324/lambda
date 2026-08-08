@@ -266,12 +266,11 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("src.posttraining.model_setup.resolve_device", return_value=torch.device("cpu")):
+            with patch("src.posttraining.model_setup.CUDA_DEVICE", torch.device("cpu")):
                 loaded_model, model_config = load_base_model(
                     base_model_dir=model_dir,
                     tokenizer=FakeTokenizer(),
                     learning_rate=5e-5,
-                    accelerator="cpu",
                     lr_warmup_steps=2,
                     lr_total_steps=10,
                     min_learning_rate=1e-5,
@@ -279,7 +278,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(model_config["max_len"], 16)
         self.assertEqual(model_config["num_layers"], 4)
-        self.assertFalse(loaded_model.use_fused_loss)
         self.assertEqual(loaded_model.lr_warmup_steps, 2)
         self.assertEqual(loaded_model.lr_total_steps, 10)
         self.assertEqual(loaded_model.min_learning_rate, 1e-5)
@@ -512,7 +510,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     max_len=8,
                     batch_size=2,
                     num_workers=0,
-                    accelerator="cpu",
                     validation_cache_path=cache_path,
                     validation_sample_count=2,
                     shuffle_seed=17,
@@ -520,6 +517,8 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(len(train_dataloader), 3)
         self.assertEqual(len(validation_dataloader), 1)
+        self.assertTrue(train_dataloader.pin_memory)
+        self.assertTrue(validation_dataloader.pin_memory)
         self.assertTrue(mocked_stream.call_args_list[0].kwargs["repeat_forever"])
         self.assertEqual(mocked_cache.call_args.kwargs["path"], cache_path)
 
@@ -529,22 +528,24 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         # Lightning's global-step validation mode.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
-            trainer = build_trainer(
-                model_dir=Path(temp_dir),
-                stage_name="lambda-chat",
-                max_steps=723,
-                accelerator="cpu",
-                precision="32-true",
-                val_check_interval=500,
-                val_batches=8,
-                checkpoint_every_n_steps=1000,
-                metric_log_every_n_steps=50,
-                gradient_accumulation_steps=2,
-            )
+            with patch("src.posttraining.trainer.L.Trainer") as trainer_class:
+                build_trainer(
+                    model_dir=Path(temp_dir),
+                    stage_name="lambda-chat",
+                    max_steps=723,
+                    val_check_interval=500,
+                    val_batches=8,
+                    checkpoint_every_n_steps=1000,
+                    metric_log_every_n_steps=50,
+                    gradient_accumulation_steps=2,
+                )
 
-        self.assertIsNone(trainer.check_val_every_n_epoch)
-        self.assertEqual(trainer.val_check_interval, 500)
-        self.assertEqual(trainer.accumulate_grad_batches, 2)
+        trainer_kwargs = trainer_class.call_args.kwargs
+        self.assertEqual(trainer_kwargs["accelerator"], "cuda")
+        self.assertEqual(trainer_kwargs["precision"], "bf16-mixed")
+        self.assertIsNone(trainer_kwargs["check_val_every_n_epoch"])
+        self.assertEqual(trainer_kwargs["val_check_interval"], 500)
+        self.assertEqual(trainer_kwargs["accumulate_grad_batches"], 2)
 
 
 if __name__ == "__main__":

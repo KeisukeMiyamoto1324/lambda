@@ -28,16 +28,14 @@ class DeviceUtilsTest(unittest.TestCase):
         # the actual number of visible GPUs.
         # ---------------------------------------------------------
         with patch("torch.cuda.device_count", return_value=4):
-            self.assertEqual(resolve_device_count(accelerator="cuda", devices="auto"), 4)
+            self.assertEqual(resolve_device_count(devices="auto"), 4)
 
     def test_resolve_strategy_uses_ddp_for_cuda_multi_gpu(self) -> None:
         # ---------------------------------------------------------
-        # Use explicit DDP only when CUDA has more than one active
-        # training device.
+        # Use explicit DDP only when more than one CUDA device is active.
         # ---------------------------------------------------------
-        self.assertEqual(resolve_strategy(accelerator="cuda", device_count=2), "ddp")
-        self.assertIsNone(resolve_strategy(accelerator="cuda", device_count=1))
-        self.assertIsNone(resolve_strategy(accelerator="mps", device_count=2))
+        self.assertEqual(resolve_strategy(device_count=2), "ddp")
+        self.assertIsNone(resolve_strategy(device_count=1))
 
 
 if __name__ == "__main__":

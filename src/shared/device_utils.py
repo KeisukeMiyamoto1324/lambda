@@ -6,39 +6,7 @@ import torch
 
 
 DevicesValue = int | str
-
-
-def resolve_device() -> torch.device:
-    # ---------------------------------------------------------
-    # Select the fastest available runtime in priority order so
-    # training and inference can share the same device policy.
-    # ---------------------------------------------------------
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    mps_backend = getattr(torch.backends, "mps", None)
-
-    if mps_backend and mps_backend.is_available():
-        return torch.device("mps")
-
-    return torch.device("cpu")
-
-
-def resolve_accelerator() -> str:
-    # ---------------------------------------------------------
-    # Convert the resolved torch device into the accelerator name
-    # expected by Lightning's Trainer configuration.
-    # ---------------------------------------------------------
-    return resolve_device().type
-
-
-def resolve_precision(accelerator: str) -> str:
-    # ---------------------------------------------------------
-    # Use mixed precision on CUDA to reduce activation memory while
-    # keeping other backends on Lightning's default 32-bit behavior.
-    # ---------------------------------------------------------
-    precision_by_accelerator = {"cuda": "bf16-mixed"}
-    return precision_by_accelerator.get(accelerator, "32-true")
+CUDA_DEVICE = torch.device("cuda")
 
 
 def resolve_devices(devices: str) -> DevicesValue:
@@ -57,7 +25,7 @@ def resolve_devices(devices: str) -> DevicesValue:
     return device_count
 
 
-def resolve_device_count(accelerator: str, devices: DevicesValue) -> int:
+def resolve_device_count(devices: DevicesValue) -> int:
     # ---------------------------------------------------------
     # Resolve the effective device count used for metadata and
     # validation budgets before Lightning builds the trainer.
@@ -65,18 +33,14 @@ def resolve_device_count(accelerator: str, devices: DevicesValue) -> int:
     if isinstance(devices, int):
         return devices
 
-    if accelerator == "cuda":
-        return max(1, torch.cuda.device_count())
-
-    return 1
+    return torch.cuda.device_count()
 
 
-def resolve_strategy(accelerator: str, device_count: int) -> str | None:
+def resolve_strategy(device_count: int) -> str | None:
     # ---------------------------------------------------------
-    # Use explicit DDP only for CUDA multi-GPU runs. Other runtime
-    # backends keep the existing single-process behavior.
+    # Use explicit DDP when more than one CUDA device is active.
     # ---------------------------------------------------------
-    if accelerator == "cuda" and device_count > 1:
+    if device_count > 1:
         return "ddp"
 
     return None
