@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import lightning as L
 
 from src.shared.model.kv_cache import KeyValueCache, LayerKeyValueCache
+from src.shared.model.linear_cross_entropy import build_linear_cross_entropy_loss
 from src.shared.model.position_encoding import RotaryPositionEmbedding
 from src.shared.model.self_attention import Attention
 
@@ -127,7 +128,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         learning_rate: float = 0.1,
         pad_token_id: int = 0,
         use_fused_optimizer: bool = False,
-        loss_chunk_size: int = 32,
+        use_fused_loss: bool = False,
         lr_warmup_steps: int | None = None,
         lr_total_steps: int | None = None,
         min_learning_rate: float | None = None,
@@ -165,7 +166,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         self.learning_rate = learning_rate
         self.pad_token_id = pad_token_id
         self.use_fused_optimizer = use_fused_optimizer
-        self.loss_chunk_size = loss_chunk_size
+        self.use_fused_loss = use_fused_loss
         self.lr_warmup_steps = lr_warmup_steps
         self.lr_total_steps = lr_total_steps
         self.min_learning_rate = min_learning_rate
@@ -182,10 +183,13 @@ class DecoderOnlyTransformer(L.LightningModule):
             raise ValueError("LR schedule requires warmup steps, total steps, and minimum learning rate")
 
         # ---------------------------------------------------------
-        # Keep summed token loss local so large vocabulary logits
-        # can be reduced chunk by chunk during training.
+        # Fuse vocabulary projection and cross entropy on CUDA while
+        # retaining the same explicit loss interface on other devices.
         # ---------------------------------------------------------
-        self.loss = nn.CrossEntropyLoss(ignore_index=pad_token_id, reduction="sum")
+        self.linear_cross_entropy = build_linear_cross_entropy_loss(
+            ignore_index=pad_token_id,
+            use_fused_kernel=use_fused_loss,
+        )
 
     def forward_hidden(
         self,
@@ -303,7 +307,7 @@ class DecoderOnlyTransformer(L.LightningModule):
             },
         }
 
-    def compute_chunked_loss(
+    def compute_loss(
         self,
         input_tokens: torch.Tensor,
         labels: torch.Tensor,
@@ -311,8 +315,8 @@ class DecoderOnlyTransformer(L.LightningModule):
         segment_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # ---------------------------------------------------------
-        # Run the Transformer stack once, then split only the large
-        # vocabulary projection and cross-entropy over token positions.
+        # Run the Transformer stack once before flattening token states
+        # for the fused vocabulary projection and cross entropy.
         # ---------------------------------------------------------
         attention_mask = None
 
@@ -324,25 +328,14 @@ class DecoderOnlyTransformer(L.LightningModule):
             position_ids=position_ids,
             attention_mask=attention_mask,
         )
-        seq_len = hidden_states.size(dim=1)
-        chunk_starts = range(0, seq_len, self.loss_chunk_size)
-
-        # ---------------------------------------------------------
-        # Accumulate summed token losses so padding can be ignored
-        # with the same weighting as a single full cross-entropy call.
-        # ---------------------------------------------------------
-        loss_chunks = [
-            self.loss(
-                self.fc_layer(
-                    hidden_states[:, chunk_start : chunk_start + self.loss_chunk_size, :]
-                ).transpose(1, 2),
-                labels[:, chunk_start : chunk_start + self.loss_chunk_size],
-            )
-            for chunk_start in chunk_starts
-        ]
-        total_loss = torch.stack(loss_chunks).sum()
-        valid_token_count = labels.ne(self.pad_token_id).sum()
-        return total_loss / valid_token_count
+        flattened_hidden_states = hidden_states.reshape(-1, hidden_states.size(dim=-1))
+        flattened_labels = labels.reshape(-1)
+        return self.linear_cross_entropy(
+            self.fc_layer.weight,
+            flattened_hidden_states,
+            flattened_labels,
+            self.fc_layer.bias,
+        )
 
     def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:
         # ---------------------------------------------------------
@@ -351,7 +344,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         # ---------------------------------------------------------
         del batch_idx
         input_tokens, labels, position_ids, segment_ids = normalize_training_batch(batch=batch)
-        loss = self.compute_chunked_loss(
+        loss = self.compute_loss(
             input_tokens=input_tokens,
             labels=labels,
             position_ids=position_ids,
@@ -367,7 +360,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         # ---------------------------------------------------------
         del batch_idx
         input_tokens, labels, position_ids, segment_ids = normalize_training_batch(batch=batch)
-        loss = self.compute_chunked_loss(
+        loss = self.compute_loss(
             input_tokens=input_tokens,
             labels=labels,
             position_ids=position_ids,

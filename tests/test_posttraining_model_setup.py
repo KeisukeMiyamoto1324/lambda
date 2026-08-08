@@ -159,7 +159,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ("--val-check-interval", "0"),
             ("--checkpoint-every-n-steps", "0"),
             ("--metric-log-every-n-steps", "0"),
-            ("--loss-chunk-size", "0"),
         ]
 
         for flag, value in invalid_cases:
@@ -273,7 +272,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                     tokenizer=FakeTokenizer(),
                     learning_rate=5e-5,
                     accelerator="cpu",
-                    loss_chunk_size=8,
                     lr_warmup_steps=2,
                     lr_total_steps=10,
                     min_learning_rate=1e-5,
@@ -281,7 +279,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(model_config["max_len"], 16)
         self.assertEqual(model_config["num_layers"], 4)
-        self.assertEqual(loaded_model.loss_chunk_size, 8)
+        self.assertFalse(loaded_model.use_fused_loss)
         self.assertEqual(loaded_model.lr_warmup_steps, 2)
         self.assertEqual(loaded_model.lr_total_steps, 10)
         self.assertEqual(loaded_model.min_learning_rate, 1e-5)
@@ -316,7 +314,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 lr_warmup_steps=2,
                 min_learning_rate=1e-5,
                 min_learning_rate_ratio=0.2,
-                loss_chunk_size=8,
                 validation_cache_path="validation.pt",
                 validation_sample_count=128,
             )
@@ -368,7 +365,6 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         self.assertEqual(payload["lr_warmup_steps"], 2)
         self.assertEqual(payload["validation_cache_path"], "validation.pt")
         self.assertEqual(payload["validation_sample_count"], 128)
-        self.assertEqual(payload["loss_chunk_size"], 8)
         self.assertTrue(model_path_exists)
 
     def test_lambda_chat_dataset_maps_messages_to_chat_messages(self) -> None:

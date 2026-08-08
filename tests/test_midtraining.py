@@ -65,7 +65,7 @@ class MidtrainingTest(unittest.TestCase):
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject values that would otherwise fail later in dataset
-        # packing, DataLoader setup, or chunked loss computation.
+        # packing, DataLoader setup, or training computation.
         # ---------------------------------------------------------
         with tempfile.TemporaryDirectory() as temp_dir:
             model_dir = Path(temp_dir)
@@ -81,7 +81,6 @@ class MidtrainingTest(unittest.TestCase):
                 ("--val-check-interval", "0"),
                 ("--checkpoint-every-n-steps", "0"),
                 ("--metric-log-every-n-steps", "0"),
-                ("--loss-chunk-size", "0"),
             ]
 
             for flag, value in invalid_cases:

@@ -89,7 +89,6 @@ def main() -> None:
         tokenizer=tokenizer,
         learning_rate=args.learning_rate,
         accelerator=accelerator,
-        loss_chunk_size=args.loss_chunk_size,
         lr_warmup_steps=args.lr_warmup_steps,
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,

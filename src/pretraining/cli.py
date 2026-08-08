@@ -29,7 +29,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-check-interval", type=int, default=10000)
     parser.add_argument("--checkpoint-every-n-steps", type=int, default=20000)
     parser.add_argument("--metric-log-every-n-steps", type=int, default=500)
-    parser.add_argument("--loss-chunk-size", type=int, default=16)
     parser.add_argument("--devices", type=str, default="auto")
     parser.add_argument("--tokenizer-path", type=str, default="models/tokenizer")
     parser.add_argument("--output-path", type=str, default="models/lambda-160m")
@@ -65,7 +64,6 @@ def parse_args() -> argparse.Namespace:
         require(args.val_check_interval > 0, "--val-check-interval must be greater than 0")
         require(args.checkpoint_every_n_steps > 0, "--checkpoint-every-n-steps must be greater than 0")
         require(args.metric_log_every_n_steps > 0, "--metric-log-every-n-steps must be greater than 0")
-        require(args.loss_chunk_size > 0, "--loss-chunk-size must be greater than 0")
         require(
             0 <= args.lr_warmup_steps < args.max_steps,
             "--lr-warmup-steps must be greater than or equal to 0 and less than --max-steps",

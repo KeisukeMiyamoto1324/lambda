@@ -10,8 +10,8 @@ def compile_training_model(
     model: DecoderOnlyTransformer,
 ) -> DecoderOnlyTransformer:
     # ---------------------------------------------------------
-    # Compile only the Transformer body so the Python loss-chunk loop
-    # and vocabulary projections remain outside the compiled graph.
+    # Compile only the Transformer body so the fused vocabulary loss
+    # remains outside the compiled graph and owns its Triton kernels.
     # ---------------------------------------------------------
     model.forward_hidden = torch.compile(
         model.forward_hidden,

@@ -54,7 +54,6 @@ def save_chat_model(
         "lr_warmup_steps": args.lr_warmup_steps,
         "min_learning_rate": args.min_learning_rate,
         "min_learning_rate_ratio": args.min_learning_rate_ratio,
-        "loss_chunk_size": args.loss_chunk_size,
         "trainable_layers": "all",
         "chat_template_version": 1,
         "posttraining_datasets": [

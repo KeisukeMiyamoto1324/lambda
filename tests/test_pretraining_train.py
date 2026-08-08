@@ -9,6 +9,7 @@ import torch
 from src.pretraining.cli import parse_args
 from src.shared.model.position_encoding import RotaryPositionEmbedding
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.linear_cross_entropy import TorchLinearCrossEntropyLoss
 from src.shared.model.self_attention import Attention
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.transformer import build_packed_attention_mask
@@ -29,7 +30,6 @@ class PretrainingTrainTest(unittest.TestCase):
             num_heads=2,
             d_ff=16,
             pad_token_id=0,
-            loss_chunk_size=4,
         )
         state_dict_keys = list(model.state_dict())
         torch_compile = torch.compile
@@ -54,7 +54,7 @@ class PretrainingTrainTest(unittest.TestCase):
         position_ids = torch.arange(8).expand(2, -1)
         segment_ids = torch.zeros((2, 8), dtype=torch.long)
 
-        loss = compiled_model.compute_chunked_loss(
+        loss = compiled_model.compute_loss(
             input_tokens=input_tokens,
             labels=labels,
             position_ids=position_ids,
@@ -63,6 +63,52 @@ class PretrainingTrainTest(unittest.TestCase):
 
         loss.backward()
         self.assertTrue(torch.isfinite(loss))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for Liger kernels")
+    def test_fused_linear_cross_entropy_matches_torch_loss_and_gradients(self) -> None:
+        # ---------------------------------------------------------
+        # Compare Liger against the explicit projection and loss for
+        # values and every input parameter gradient on CUDA.
+        # ---------------------------------------------------------
+        torch.manual_seed(7)
+        hidden_states = torch.randn((16, 8), device="cuda", requires_grad=True)
+        weight = torch.randn((32, 8), device="cuda", requires_grad=True)
+        bias = torch.randn(32, device="cuda", requires_grad=True)
+        labels = torch.randint(1, 32, (16,), device="cuda")
+        labels[:3] = 0
+        reference_hidden_states = hidden_states.detach().clone().requires_grad_()
+        reference_weight = weight.detach().clone().requires_grad_()
+        reference_bias = bias.detach().clone().requires_grad_()
+        fused_model = DecoderOnlyTransformer(
+            num_tokens=32,
+            d_model=8,
+            num_layers=1,
+            num_heads=2,
+            d_ff=16,
+            pad_token_id=0,
+            use_fused_loss=True,
+        ).cuda()
+        reference_loss_module = TorchLinearCrossEntropyLoss(ignore_index=0)
+
+        # ---------------------------------------------------------
+        # Backpropagate both implementations independently before
+        # comparing the fused gradients with their PyTorch references.
+        # ---------------------------------------------------------
+        fused_loss = fused_model.linear_cross_entropy(weight, hidden_states, labels, bias)
+        reference_loss = reference_loss_module(
+            reference_weight,
+            reference_hidden_states,
+            labels,
+            reference_bias,
+        )
+        fused_loss.backward()
+        reference_loss.backward()
+
+        torch.testing.assert_close(fused_loss, reference_loss, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(hidden_states.grad, reference_hidden_states.grad, rtol=1e-4, atol=1e-5)
+        torch.testing.assert_close(weight.grad, reference_weight.grad, rtol=1e-4, atol=1e-5)
+        torch.testing.assert_close(bias.grad, reference_bias.grad, rtol=1e-4, atol=1e-5)
+        self.assertIs(fused_model.fc_layer.weight, fused_model.we.weight)
 
     def test_rotary_position_embedding_keeps_shape_dtype_and_device(self) -> None:
         # ---------------------------------------------------------
@@ -172,7 +218,7 @@ class PretrainingTrainTest(unittest.TestCase):
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject values that would otherwise fail later in dataset
-        # packing, DataLoader setup, or chunked loss computation.
+        # packing, DataLoader setup, or training computation.
         # ---------------------------------------------------------
         invalid_cases = [
             ("--max-len", "0"),
@@ -181,7 +227,6 @@ class PretrainingTrainTest(unittest.TestCase):
             ("--val-check-interval", "0"),
             ("--checkpoint-every-n-steps", "0"),
             ("--metric-log-every-n-steps", "0"),
-            ("--loss-chunk-size", "0"),
         ]
 
         for flag, value in invalid_cases:
@@ -343,7 +388,7 @@ class PretrainingTrainTest(unittest.TestCase):
         labels = torch.tensor([[3, 2, 4, 2]], dtype=torch.long)
         position_ids = torch.tensor([[0, 1, 0, 1]], dtype=torch.long)
         segment_ids = torch.tensor([[0, 0, 1, 1]], dtype=torch.long)
-        loss = model.compute_chunked_loss(
+        loss = model.compute_loss(
             input_tokens=input_tokens,
             labels=labels,
             position_ids=position_ids,

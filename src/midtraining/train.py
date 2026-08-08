@@ -181,11 +181,11 @@ def main() -> None:
         learning_rate=args.learning_rate,
         max_len=max_len,
         use_fused_optimizer=accelerator == "cuda",
+        use_fused_loss=accelerator == "cuda",
         lr_warmup_steps=args.lr_warmup_steps,
         lr_total_steps=args.max_steps,
         min_learning_rate=min_learning_rate,
     )
-    model.loss_chunk_size = args.loss_chunk_size
 
     # ---------------------------------------------------------
     # Compile the fixed-shape Transformer body while preserving the
@@ -288,7 +288,6 @@ def main() -> None:
         "lr_warmup_steps": args.lr_warmup_steps,
         "min_learning_rate": min_learning_rate,
         "min_learning_rate_ratio": args.min_learning_rate_ratio,
-        "loss_chunk_size": args.loss_chunk_size,
         "pad_token_id": pad_token_id,
         "bos_token_id": bos_token_id,
         "eos_token_id": eos_token_id,
