@@ -18,6 +18,7 @@ def show_training_token_budget(
     global_batch_size = batch_size * device_count
     global_effective_batch_size = global_batch_size * gradient_accumulation_steps
     planned_tokens = max_steps * global_effective_batch_size * max_len
+    planned_tokens_in_billions = planned_tokens / 1_000_000_000
     tokens_per_parameter = planned_tokens / parameter_count
 
     table = Table(title="Planned Training Tokens", show_header=True)
@@ -29,6 +30,6 @@ def show_training_token_budget(
     table.add_row("Gradient accumulation", f"{gradient_accumulation_steps:,}")
     table.add_row("Global effective batch size", f"{global_effective_batch_size:,}")
     table.add_row("Model parameters", f"{parameter_count:,}")
-    table.add_row("Planned tokens", f"{planned_tokens:,}")
+    table.add_row("Planned tokens", f"{planned_tokens_in_billions:,.2f}B")
     table.add_row("Tokens per parameter", f"{tokens_per_parameter:,.2f}x")
     console.print(table)
