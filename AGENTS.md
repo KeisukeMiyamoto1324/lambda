@@ -1,3 +1,7 @@
+## Project
+- Build small language models from scratch.
+- Plan to use Nvidia H100 to train the model. Dev env may be on MacOS. 
+
 ## Coding Style
 - For Python, comments may be written for each processing block (NOT line by line) in the following format:
 
