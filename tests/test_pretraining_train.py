@@ -263,6 +263,33 @@ class PretrainingTrainTest(unittest.TestCase):
         self.assertEqual(automatic_args.num_kv_heads, 5)
         self.assertEqual(explicit_args.num_kv_heads, 3)
 
+    def test_default_architecture_has_about_360m_trainable_parameters(self) -> None:
+        # ---------------------------------------------------------
+        # Keep the default architecture near the 360M model class
+        # after low-rank FFN and GQA parameter reductions.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["train.py"]):
+            args = parse_args()
+
+        model = DecoderOnlyTransformer(
+            num_tokens=65_536,
+            d_model=args.d_model,
+            max_len=args.max_len,
+            num_layers=args.num_layers,
+            num_heads=args.num_heads,
+            num_kv_heads=args.num_kv_heads,
+            d_ff=args.d_ff,
+        )
+        trainable_parameter_count = sum(
+            parameter.numel()
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        )
+
+        self.assertEqual(args.num_layers, 32)
+        self.assertEqual(args.d_ff, 4096)
+        self.assertEqual(trainable_parameter_count, 360_213_440)
+
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject values that would otherwise fail later in dataset

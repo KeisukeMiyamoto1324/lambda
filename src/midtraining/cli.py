@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-every-n-steps", type=int, default=5000)
     parser.add_argument("--metric-log-every-n-steps", type=int, default=1000)
     parser.add_argument("--devices", type=str, default="auto")
-    parser.add_argument("--output-path", type=str, default="models/lambda-160m-midtrained")
+    parser.add_argument("--output-path", type=str, default="models/lambda-360m-midtrained")
     parser.add_argument("--resume-from-checkpoint", type=str, default="")
     parser.add_argument("--push-to-hub", action="store_true")
     args = parser.parse_args()
