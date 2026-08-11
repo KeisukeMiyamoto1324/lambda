@@ -6,6 +6,20 @@ from src.shared.cli import require
 from src.shared.device_utils import resolve_devices
 
 
+def resolve_num_kv_heads(num_heads: int) -> int:
+    # ---------------------------------------------------------
+    # Prefer four query heads per KV head, then use three when four
+    # cannot divide the query-head count evenly.
+    # ---------------------------------------------------------
+    if num_heads % 4 == 0:
+        return num_heads // 4
+
+    if num_heads % 3 == 0:
+        return num_heads // 3
+
+    raise ValueError("--num-heads must be divisible by 3 or 4 when --num-kv-heads is omitted")
+
+
 def parse_args() -> argparse.Namespace:
     # ---------------------------------------------------------
     # Define command line arguments used to configure the full
@@ -16,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--d-model", type=int, default=960)
     parser.add_argument("--num-layers", type=int, default=27)
     parser.add_argument("--num-heads", type=int, default=15)
-    parser.add_argument("--num-kv-heads", type=int, default=5)
+    parser.add_argument("--num-kv-heads", type=int)
     parser.add_argument("--d-ff", type=int, default=2560)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--lr-warmup-steps", type=int, default=2000)
@@ -50,6 +64,10 @@ def parse_args() -> argparse.Namespace:
         require(args.d_model > 0, "--d-model must be greater than 0")
         require(args.num_layers > 0, "--num-layers must be greater than 0")
         require(args.num_heads > 0, "--num-heads must be greater than 0")
+
+        if args.num_kv_heads is None:
+            args.num_kv_heads = resolve_num_kv_heads(num_heads=args.num_heads)
+
         require(args.num_kv_heads > 0, "--num-kv-heads must be greater than 0")
         require(args.d_ff > 0, "--d-ff must be greater than 0")
         require(args.d_model % args.num_heads == 0, "--d-model must be divisible by --num-heads")

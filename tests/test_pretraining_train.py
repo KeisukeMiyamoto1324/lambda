@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from src.pretraining.cli import parse_args
+from src.pretraining.cli import resolve_num_kv_heads
 from src.shared.model.position_encoding import RotaryPositionEmbedding
 from src.shared.model.compilation import compile_training_model
 from src.shared.model.self_attention import Attention
@@ -232,6 +233,36 @@ class PretrainingTrainTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_args()
 
+    def test_resolve_num_kv_heads_prefers_four_to_one_grouping(self) -> None:
+        # ---------------------------------------------------------
+        # Use four query heads per KV head whenever the query-head
+        # count supports equal groups.
+        # ---------------------------------------------------------
+        self.assertEqual(resolve_num_kv_heads(num_heads=12), 3)
+        self.assertEqual(resolve_num_kv_heads(num_heads=16), 4)
+
+    def test_resolve_num_kv_heads_uses_three_to_one_grouping(self) -> None:
+        # ---------------------------------------------------------
+        # Use three query heads per KV head when four-way grouping
+        # cannot divide the query-head count.
+        # ---------------------------------------------------------
+        self.assertEqual(resolve_num_kv_heads(num_heads=15), 5)
+        self.assertEqual(resolve_num_kv_heads(num_heads=18), 6)
+
+    def test_parse_args_uses_automatic_or_explicit_kv_heads(self) -> None:
+        # ---------------------------------------------------------
+        # Resolve omitted KV heads while preserving an explicit valid
+        # value supplied by the caller.
+        # ---------------------------------------------------------
+        with patch("sys.argv", ["train.py"]):
+            automatic_args = parse_args()
+
+        with patch("sys.argv", ["train.py", "--num-kv-heads", "3"]):
+            explicit_args = parse_args()
+
+        self.assertEqual(automatic_args.num_kv_heads, 5)
+        self.assertEqual(explicit_args.num_kv_heads, 3)
+
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
         # Reject values that would otherwise fail later in dataset
@@ -283,6 +314,7 @@ class PretrainingTrainTest(unittest.TestCase):
             ["--d-model", "10", "--num-heads", "3"],
             ["--d-model", "6", "--num-heads", "2"],
             ["--num-heads", "15", "--num-kv-heads", "4"],
+            ["--d-model", "960", "--num-heads", "10"],
         ]
 
         for cli_values in invalid_cases:
