@@ -29,12 +29,14 @@ class FeedForward(nn.Module):
             in_features=d_model,
             out_features=2 * d_ff,
             rank=rank,
+            bias=False,
         )
         self.activation = nn.SiLU()
         self.down_proj = LowRankLinear(
             in_features=d_ff,
             out_features=d_model,
             rank=rank,
+            bias=False,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -168,7 +170,11 @@ class DecoderOnlyTransformer(L.LightningModule):
             ]
         )
         self.final_norm = nn.RMSNorm(normalized_shape=d_model)
-        self.fc_layer = nn.Linear(in_features=d_model, out_features=num_tokens)
+        self.fc_layer = nn.Linear(
+            in_features=d_model,
+            out_features=num_tokens,
+            bias=False,
+        )
 
         # ---------------------------------------------------------
         # Share token embedding weights with the output projection

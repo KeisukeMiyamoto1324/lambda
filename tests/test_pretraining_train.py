@@ -288,7 +288,7 @@ class PretrainingTrainTest(unittest.TestCase):
 
         self.assertEqual(args.num_layers, 32)
         self.assertEqual(args.d_ff, 4096)
-        self.assertEqual(trainable_parameter_count, 360_213_440)
+        self.assertEqual(trainable_parameter_count, 359_855_040)
 
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
@@ -354,10 +354,10 @@ class PretrainingTrainTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     parse_args()
 
-    def test_optimizer_excludes_embedding_norm_and_bias_from_weight_decay(self) -> None:
+    def test_optimizer_excludes_embedding_and_norm_from_weight_decay(self) -> None:
         # ---------------------------------------------------------
         # Keep regular matrix weights decayed while excluding token
-        # embeddings, normalization parameters, and bias parameters.
+        # embeddings and normalization parameters.
         # ---------------------------------------------------------
         model = DecoderOnlyTransformer(
             num_tokens=12,
@@ -379,7 +379,9 @@ class PretrainingTrainTest(unittest.TestCase):
         self.assertIn(id(model.we.weight), no_decay_parameter_ids)
         self.assertIn(id(model.final_norm.weight), no_decay_parameter_ids)
         self.assertIn(id(model.blocks[0].norm_1.weight), no_decay_parameter_ids)
-        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.output_proj.bias), no_decay_parameter_ids)
+        self.assertIsNone(model.blocks[0].feed_forward.gate_up_proj.output_proj.bias)
+        self.assertIsNone(model.blocks[0].feed_forward.down_proj.output_proj.bias)
+        self.assertIsNone(model.fc_layer.bias)
 
     def test_resolve_warmup_cosine_learning_rate(self) -> None:
         # ---------------------------------------------------------

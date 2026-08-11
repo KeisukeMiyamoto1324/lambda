@@ -8,7 +8,7 @@ class LowRankLinear(nn.Module):
         in_features: int,
         out_features: int,
         rank: int,
-        bias: bool = True,
+        bias: bool = False,
     ) -> None:
         super().__init__()
 
