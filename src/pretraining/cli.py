@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--d-model", type=int, default=960)
     parser.add_argument("--num-layers", type=int, default=27)
     parser.add_argument("--num-heads", type=int, default=15)
+    parser.add_argument("--num-kv-heads", type=int, default=5)
     parser.add_argument("--d-ff", type=int, default=2560)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--lr-warmup-steps", type=int, default=2000)
@@ -49,8 +50,13 @@ def parse_args() -> argparse.Namespace:
         require(args.d_model > 0, "--d-model must be greater than 0")
         require(args.num_layers > 0, "--num-layers must be greater than 0")
         require(args.num_heads > 0, "--num-heads must be greater than 0")
+        require(args.num_kv_heads > 0, "--num-kv-heads must be greater than 0")
         require(args.d_ff > 0, "--d-ff must be greater than 0")
         require(args.d_model % args.num_heads == 0, "--d-model must be divisible by --num-heads")
+        require(
+            args.num_heads % args.num_kv_heads == 0,
+            "--num-heads must be divisible by --num-kv-heads",
+        )
         require((args.d_model // args.num_heads) % 2 == 0, "--d-model divided by --num-heads must be even")
         require(args.learning_rate > 0.0, "--learning-rate must be greater than 0")
         require(args.batch_size > 0, "--batch-size must be greater than 0")

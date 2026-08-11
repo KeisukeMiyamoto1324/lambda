@@ -256,6 +256,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                         "d_model": 8,
                         "num_layers": 4,
                         "num_heads": 2,
+                        "num_kv_heads": 1,
                         "d_ff": 16,
                         "learning_rate": 5e-5,
                         "pad_token_id": 0,
@@ -320,6 +321,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
                 "d_model": 8,
                 "num_layers": 4,
                 "num_heads": 2,
+                "num_kv_heads": 1,
                 "d_ff": 16,
                 "learning_rate": 5e-5,
                 "pad_token_id": 0,
@@ -343,6 +345,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
 
         self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
         self.assertEqual(payload["training_max_len"], 8)
+        self.assertEqual(payload["num_kv_heads"], 1)
         self.assertEqual(payload["trainable_layers"], "all")
         self.assertEqual(
             payload["posttraining_datasets"],

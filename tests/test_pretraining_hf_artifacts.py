@@ -23,6 +23,7 @@ def build_model_config() -> dict[str, int | float]:
         "d_model": 8,
         "num_layers": 2,
         "num_heads": 2,
+        "num_kv_heads": 1,
         "d_ff": 16,
         "learning_rate": 0.1,
         "pad_token_id": 0,
@@ -45,6 +46,7 @@ class PretrainingPytorchArtifactsTest(unittest.TestCase):
         self.assertEqual(model.we.num_embeddings, 12)
         self.assertEqual(model.we.embedding_dim, 8)
         self.assertEqual(len(model.blocks), 2)
+        self.assertEqual(model.blocks[0].attention.num_kv_heads, 1)
 
     def test_load_pytorch_model_restores_state_dict(self) -> None:
         # ---------------------------------------------------------

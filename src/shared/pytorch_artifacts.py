@@ -54,6 +54,7 @@ def build_model_from_config(
         max_len=int(model_config["max_len"] if max_len is None else max_len),
         num_layers=int(model_config["num_layers"]),
         num_heads=int(model_config["num_heads"]),
+        num_kv_heads=int(model_config["num_kv_heads"]),
         d_ff=int(model_config["d_ff"]),
         learning_rate=float(model_config["learning_rate"] if learning_rate is None else learning_rate),
         pad_token_id=int(model_config["pad_token_id"]),

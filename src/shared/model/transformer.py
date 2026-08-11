@@ -53,6 +53,7 @@ class DecoderBlock(nn.Module):
         self,
         d_model: int,
         num_heads: int,
+        num_kv_heads: int,
         d_ff: int,
         rotary_position_embedding: RotaryPositionEmbedding,
     ) -> None:
@@ -66,6 +67,7 @@ class DecoderBlock(nn.Module):
         self.attention = Attention(
             d_model=d_model,
             num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
             rotary_position_embedding=rotary_position_embedding,
         )
         self.norm_2 = nn.RMSNorm(normalized_shape=d_model)
@@ -134,6 +136,7 @@ class DecoderOnlyTransformer(L.LightningModule):
         max_len: int = 6,
         num_layers: int = 2,
         num_heads: int = 1,
+        num_kv_heads: int = 1,
         d_ff: int = 8,
         learning_rate: float = 0.1,
         pad_token_id: int = 0,
@@ -157,6 +160,7 @@ class DecoderOnlyTransformer(L.LightningModule):
                 DecoderBlock(
                     d_model=d_model,
                     num_heads=num_heads,
+                    num_kv_heads=num_kv_heads,
                     d_ff=d_ff,
                     rotary_position_embedding=self.rotary_position_embedding,
                 )

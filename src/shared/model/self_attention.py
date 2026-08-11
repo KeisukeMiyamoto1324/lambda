@@ -11,6 +11,7 @@ class Attention(nn.Module):
         self,
         d_model: int = 2,
         num_heads: int = 1,
+        num_kv_heads: int = 1,
         rotary_position_embedding: RotaryPositionEmbedding | None = None,
     ) -> None:
         super().__init__()
@@ -22,27 +23,36 @@ class Attention(nn.Module):
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
 
+        if num_kv_heads <= 0 or num_heads % num_kv_heads != 0:
+            raise ValueError("num_heads must be divisible by num_kv_heads")
+
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
         self.head_dim = d_model // num_heads
+        self.kv_dim = num_kv_heads * self.head_dim
         self.rotary_position_embedding = rotary_position_embedding or RotaryPositionEmbedding(
             head_dim=self.head_dim,
         )
 
         # ---------------------------------------------------------
-        # Project self-attention inputs into query, key, and value
-        # spaces with one matrix multiplication.
+        # Keep every query head while projecting fewer shared key and
+        # value heads for grouped-query attention.
         # ---------------------------------------------------------
-        self.qkv_proj = nn.Linear(in_features=d_model, out_features=3 * d_model, bias=False)
+        self.qkv_proj = nn.Linear(
+            in_features=d_model,
+            out_features=d_model + 2 * self.kv_dim,
+            bias=False,
+        )
         self.W_o = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
 
-    def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+    def _split_heads(self, x: torch.Tensor, num_heads: int) -> torch.Tensor:
         # ---------------------------------------------------------
         # Rearrange the last dimension into head count and head size
         # so attention can be computed independently per head.
         # ---------------------------------------------------------
         batch_size, seq_len, _ = x.size()
-        reshaped = x.view(batch_size, seq_len, self.num_heads, self.head_dim)
+        reshaped = x.view(batch_size, seq_len, num_heads, self.head_dim)
         return reshaped.transpose(1, 2)
 
     def _merge_heads(self, x: torch.Tensor) -> torch.Tensor:
@@ -66,7 +76,10 @@ class Attention(nn.Module):
         # separating their attention heads.
         # ---------------------------------------------------------
         qkv = self.qkv_proj(x)
-        q, k, v = [self._split_heads(projection) for projection in qkv.chunk(3, dim=-1)]
+        q, k, v = qkv.split((self.d_model, self.kv_dim, self.kv_dim), dim=-1)
+        q = self._split_heads(q, num_heads=self.num_heads)
+        k = self._split_heads(k, num_heads=self.num_kv_heads)
+        v = self._split_heads(v, num_heads=self.num_kv_heads)
 
         # ---------------------------------------------------------
         # Apply rotary positions to queries and keys before the
@@ -74,6 +87,13 @@ class Attention(nn.Module):
         # ---------------------------------------------------------
         q = self.rotary_position_embedding(q, position_ids=position_ids)
         k = self.rotary_position_embedding(k, position_ids=position_ids)
+
+        # ---------------------------------------------------------
+        # Add a singleton head axis so each packed sequence mask is
+        # shared across all query heads.
+        # ---------------------------------------------------------
+        if attention_mask is not None and attention_mask.dim() == 3:
+            attention_mask = attention_mask.unsqueeze(1)
 
         # ---------------------------------------------------------
         # Use PyTorch's fused scaled dot-product attention so large
@@ -85,6 +105,7 @@ class Attention(nn.Module):
             v,
             attn_mask=attention_mask,
             is_causal=is_causal,
+            enable_gqa=self.num_heads != self.num_kv_heads,
         )
 
         # ---------------------------------------------------------
@@ -106,10 +127,13 @@ class Attention(nn.Module):
         # values so generation can avoid recomputing old states.
         # ---------------------------------------------------------
         qkv = self.qkv_proj(x)
-        q, current_k, current_v = [
-            self._split_heads(projection)
-            for projection in qkv.chunk(3, dim=-1)
-        ]
+        q, current_k, current_v = qkv.split(
+            (self.d_model, self.kv_dim, self.kv_dim),
+            dim=-1,
+        )
+        q = self._split_heads(q, num_heads=self.num_heads)
+        current_k = self._split_heads(current_k, num_heads=self.num_kv_heads)
+        current_v = self._split_heads(current_v, num_heads=self.num_kv_heads)
 
         # ---------------------------------------------------------
         # Rotate only the newly projected queries and keys. Cached
@@ -135,6 +159,7 @@ class Attention(nn.Module):
             k,
             v,
             is_causal=is_causal,
+            enable_gqa=self.num_heads != self.num_kv_heads,
         )
 
         # ---------------------------------------------------------

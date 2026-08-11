@@ -158,7 +158,7 @@ class PretrainingTrainTest(unittest.TestCase):
         # Store RoPE-applied keys in the cache and append only the
         # newly generated token states on the next inference step.
         # ---------------------------------------------------------
-        attention = Attention(d_model=8, num_heads=2)
+        attention = Attention(d_model=8, num_heads=2, num_kv_heads=1)
         first_input = torch.randn((1, 2, 8), dtype=torch.float32)
         _, first_cache = attention.forward_with_cache(
             first_input,
@@ -173,6 +173,29 @@ class PretrainingTrainTest(unittest.TestCase):
 
         self.assertEqual(first_cache[0].size(dim=2), 2)
         self.assertEqual(next_cache[0].size(dim=2), 3)
+        self.assertEqual(next_cache[0].size(dim=1), 1)
+
+    def test_grouped_query_attention_uses_fewer_kv_heads(self) -> None:
+        # ---------------------------------------------------------
+        # Keep all query heads while sharing one key and value head
+        # across each query-head group.
+        # ---------------------------------------------------------
+        attention = Attention(d_model=16, num_heads=4, num_kv_heads=2)
+        inputs = torch.randn((2, 5, 16), dtype=torch.float32)
+        attention_mask = torch.ones((2, 5, 5), dtype=torch.bool).tril()
+
+        outputs = attention(inputs, attention_mask=attention_mask)
+
+        self.assertEqual(outputs.shape, inputs.shape)
+        self.assertEqual(attention.qkv_proj.out_features, 32)
+
+    def test_grouped_query_attention_rejects_invalid_head_groups(self) -> None:
+        # ---------------------------------------------------------
+        # Require each KV head to serve the same integer number of
+        # query heads.
+        # ---------------------------------------------------------
+        with self.assertRaisesRegex(ValueError, "divisible"):
+            Attention(d_model=12, num_heads=3, num_kv_heads=2)
 
     def test_attention_rejects_odd_head_dim_for_rope(self) -> None:
         # ---------------------------------------------------------
@@ -259,6 +282,7 @@ class PretrainingTrainTest(unittest.TestCase):
         invalid_cases = [
             ["--d-model", "10", "--num-heads", "3"],
             ["--d-model", "6", "--num-heads", "2"],
+            ["--num-heads", "15", "--num-kv-heads", "4"],
         ]
 
         for cli_values in invalid_cases:
