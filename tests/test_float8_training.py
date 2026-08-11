@@ -35,9 +35,11 @@ class Float8TrainingTest(unittest.TestCase):
 
         for block in converted_model.blocks:
             self.assertIsInstance(block.attention.qkv_proj, Float8Linear)
-            self.assertIsInstance(block.feed_forward.gate_up_proj, Float8Linear)
+            self.assertIsInstance(block.feed_forward.gate_up_proj.input_proj, Float8Linear)
+            self.assertIsInstance(block.feed_forward.gate_up_proj.output_proj, Float8Linear)
             self.assertIs(type(block.attention.W_o), nn.Linear)
-            self.assertIs(type(block.feed_forward.down_proj), nn.Linear)
+            self.assertIs(type(block.feed_forward.down_proj.input_proj), nn.Linear)
+            self.assertIs(type(block.feed_forward.down_proj.output_proj), nn.Linear)
 
         self.assertIs(type(converted_model.fc_layer), nn.Linear)
 

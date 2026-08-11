@@ -291,11 +291,12 @@ class PretrainingTrainTest(unittest.TestCase):
         no_decay_parameter_ids = {id(parameter) for parameter in no_decay_group["params"]}
 
         self.assertIn(id(model.blocks[0].attention.qkv_proj.weight), decay_parameter_ids)
-        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.weight), decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.input_proj.weight), decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.output_proj.weight), decay_parameter_ids)
         self.assertIn(id(model.we.weight), no_decay_parameter_ids)
         self.assertIn(id(model.final_norm.weight), no_decay_parameter_ids)
         self.assertIn(id(model.blocks[0].norm_1.weight), no_decay_parameter_ids)
-        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.bias), no_decay_parameter_ids)
+        self.assertIn(id(model.blocks[0].feed_forward.gate_up_proj.output_proj.bias), no_decay_parameter_ids)
 
     def test_resolve_warmup_cosine_learning_rate(self) -> None:
         # ---------------------------------------------------------

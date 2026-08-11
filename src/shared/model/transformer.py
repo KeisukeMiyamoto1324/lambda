@@ -8,6 +8,7 @@ import lightning as L
 
 from src.shared.model.kv_cache import KeyValueCache, LayerKeyValueCache
 from src.shared.model.linear_cross_entropy import build_linear_cross_entropy_loss
+from src.shared.model.low_rank_linear import LowRankLinear
 from src.shared.model.position_encoding import RotaryPositionEmbedding
 from src.shared.model.self_attention import Attention
 
@@ -20,12 +21,21 @@ class FeedForward(nn.Module):
         super().__init__()
 
         # ---------------------------------------------------------
-        # Use one projection for SwiGLU gate and value channels before
-        # mapping the gated activations back to model width.
+        # Use half the model width as the shared low-rank bottleneck
+        # for both SwiGLU projections.
         # ---------------------------------------------------------
-        self.gate_up_proj = nn.Linear(in_features=d_model, out_features=2 * d_ff)
+        rank = d_model // 2
+        self.gate_up_proj = LowRankLinear(
+            in_features=d_model,
+            out_features=2 * d_ff,
+            rank=rank,
+        )
         self.activation = nn.SiLU()
-        self.down_proj = nn.Linear(in_features=d_ff, out_features=d_model)
+        self.down_proj = LowRankLinear(
+            in_features=d_ff,
+            out_features=d_model,
+            rank=rank,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # ---------------------------------------------------------

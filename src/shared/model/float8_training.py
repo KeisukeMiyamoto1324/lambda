@@ -10,7 +10,8 @@ FLOAT8_RECIPE = "tensorwise"
 TRAINING_PRECISION = "fp8"
 FLOAT8_MODULE_SUFFIXES = (
     "attention.qkv_proj",
-    "feed_forward.gate_up_proj",
+    "feed_forward.gate_up_proj.input_proj",
+    "feed_forward.gate_up_proj.output_proj",
 )
 
 
