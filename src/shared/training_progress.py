@@ -27,7 +27,7 @@ class FullTrainingProgressBar(Callback):
             return
 
         self.task_id = progress_manager.add_task(
-            description="Full training",
+            description="Compiling training graph",
             total=trainer.max_steps,
             completed=trainer.global_step,
         )
@@ -52,8 +52,28 @@ class FullTrainingProgressBar(Callback):
         progress_manager.update(
             task_id=self.task_id,
             completed=trainer.global_step,
+            description="Full training",
         )
         self._update_metrics(trainer=trainer)
+
+    def on_validation_start(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+    ) -> None:
+        # ---------------------------------------------------------
+        # Reuse the training row to show that validation is active
+        # while optimizer-step progress is temporarily paused.
+        # ---------------------------------------------------------
+        del pl_module
+
+        if self.task_id is None or not trainer.is_global_zero:
+            return
+
+        progress_manager.update(
+            task_id=self.task_id,
+            description="Validation",
+        )
 
     def on_validation_epoch_end(
         self,
@@ -65,6 +85,13 @@ class FullTrainingProgressBar(Callback):
         # the current training loss beside the full-run ETA.
         # ---------------------------------------------------------
         del pl_module
+
+        if self.task_id is not None and trainer.is_global_zero:
+            progress_manager.update(
+                task_id=self.task_id,
+                description="Full training",
+            )
+
         self._update_metrics(trainer=trainer)
 
     def on_fit_end(

@@ -57,12 +57,20 @@ class ProgressManager:
         completed: int | None = None,
         advance: int = 0,
         metrics: str | None = None,
+        description: str | None = None,
     ) -> None:
         # ---------------------------------------------------------
         # Update task progress and optional metrics without creating
         # a second live display that could corrupt terminal output.
         # ---------------------------------------------------------
-        fields = {} if metrics is None else {"metrics": metrics}
+        fields: dict[str, str] = {}
+
+        if metrics is not None:
+            fields["metrics"] = metrics
+
+        if description is not None:
+            fields["description"] = description
+
         self.progress.update(
             task_id=task_id,
             completed=completed,

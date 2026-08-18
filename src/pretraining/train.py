@@ -6,6 +6,7 @@ import sys
 
 import lightning as L
 import torch
+from datasets.utils.logging import disable_progress_bar
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
@@ -36,6 +37,7 @@ from src.pretraining.training_corpus_cases import serialize_pretraining_corpus_c
 from src.shared.tokenizer import ByteLevelBPE
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.compilation import configure_compilation_output
 from src.shared.model.float8_training import convert_model_to_float8_training
 from src.shared.model.float8_training import FLOAT8_RECIPE
 from src.shared.model.float8_training import TRAINING_PRECISION
@@ -66,6 +68,8 @@ def main() -> None:
     # Parse the CLI input and load the tokenizer artifact that
     # defines the training vocabulary and special tokens.
     # ---------------------------------------------------------
+    disable_progress_bar()
+    configure_compilation_output()
     args = parse_args()
     tokenizer = ByteLevelBPE.load(Path(args.tokenizer_path))
     devices = resolve_devices(devices=args.devices)
