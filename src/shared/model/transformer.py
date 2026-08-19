@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 import lightning as L
@@ -361,6 +362,22 @@ class DecoderOnlyTransformer(L.LightningModule):
             flattened_hidden_states,
             flattened_labels,
             self.fc_layer.bias,
+        )
+
+    def compute_inference_loss(
+        self,
+        input_tokens: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> torch.Tensor:
+        # ---------------------------------------------------------
+        # Use portable PyTorch cross entropy for evaluation on CUDA,
+        # Apple Metal, and CPU without the CUDA-only Liger kernel.
+        # ---------------------------------------------------------
+        logits = self(input_tokens)
+        return F.cross_entropy(
+            logits.reshape(-1, logits.size(dim=-1)),
+            labels.reshape(-1),
+            ignore_index=self.pad_token_id,
         )
 
     def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:

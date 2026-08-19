@@ -118,7 +118,7 @@ class FakeModel(nn.Module):
         self.probe = nn.Parameter(torch.zeros(1))
         self.labels: list[list[int]] = []
 
-    def compute_loss(self, input_tokens: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def compute_inference_loss(self, input_tokens: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         # ---------------------------------------------------------
         # Prefer answer A by giving its label token the lowest fake
         # loss. This keeps evaluation deterministic.

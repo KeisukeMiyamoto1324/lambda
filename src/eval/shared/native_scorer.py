@@ -109,7 +109,7 @@ def score_native_continuation(
     labels = torch.tensor([label_token_ids], dtype=torch.long, device=device)
 
     with torch.no_grad():
-        loss = model.compute_loss(input_tokens=input_tokens, labels=labels)
+        loss = model.compute_inference_loss(input_tokens=input_tokens, labels=labels)
 
     return float(loss.item())
 
@@ -181,7 +181,7 @@ def score_native_text_chunk(
     labels = torch.tensor([label_token_ids], dtype=torch.long, device=device)
 
     with torch.no_grad():
-        loss = model.compute_loss(input_tokens=input_tokens, labels=labels)
+        loss = model.compute_inference_loss(input_tokens=input_tokens, labels=labels)
 
     token_count = len(label_token_ids)
     return TextScore(
