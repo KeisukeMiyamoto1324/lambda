@@ -174,6 +174,27 @@ class MidtrainingTest(unittest.TestCase):
 
         self.assertEqual(args.max_len, 4096)
 
+    def test_parse_args_accepts_hub_push_with_mid_repo(self) -> None:
+        # ---------------------------------------------------------
+        # Accept automatic upload when the midtraining model
+        # repository is available through the environment.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+
+            for file_name in ["model.pth", "model_config.json", "tokenizer.json"]:
+                (model_dir / file_name).touch()
+
+            argv = ["train.py", "--model-path", str(model_dir), "--push-to-hub"]
+
+            with patch("sys.argv", argv), patch.dict(
+                "os.environ",
+                {"HF_REPO_MID": "user/lambda-mid"},
+            ):
+                args = parse_args()
+
+        self.assertTrue(args.push_to_hub)
+
 
 if __name__ == "__main__":
     unittest.main()
