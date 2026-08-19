@@ -211,11 +211,11 @@ def main() -> None:
     # ---------------------------------------------------------
     callbacks = [
         FullTrainingProgressBar(),
-        ValidationGenerationCallback(
-            dataset=val_dataset,
-            tokenizer=tokenizer,
-            output_dir=model_dir / "validation-generations",
-        ),
+        # ValidationGenerationCallback(
+        #     dataset=val_dataset,
+        #     tokenizer=tokenizer,
+        #     output_dir=model_dir / "validation-generations",
+        # ),
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="step-{step}",
