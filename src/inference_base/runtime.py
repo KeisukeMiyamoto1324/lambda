@@ -3,7 +3,7 @@ import argparse
 from src.inference_base.generation import resolve_torch_dtype
 from src.inference_base.generation import stream_continuation_text
 from src.shared.console import console
-from src.shared.device_utils import CUDA_DEVICE
+from src.shared.device_utils import resolve_inference_device
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import resolve_model_dir
 from src.shared.tokenizer import ByteLevelBPE
@@ -21,7 +21,8 @@ def run_inference(args: argparse.Namespace) -> None:
         vocab_size=tokenizer.get_vocab_size(),
     )
     torch_dtype = resolve_torch_dtype(torch_dtype=args.torch_dtype)
-    model = model.to(device=CUDA_DEVICE)
+    device = resolve_inference_device()
+    model = model.to(device=device)
 
     if torch_dtype is not None:
         model = model.to(dtype=torch_dtype)

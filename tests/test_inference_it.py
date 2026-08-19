@@ -1,7 +1,9 @@
+import argparse
 import io
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import torch
@@ -12,6 +14,7 @@ from src.inference_it.generation import build_chat_input_ids
 from src.inference_it.generation import generate_chat_response
 from src.inference_it.generation import generate_token_ids
 from src.inference_it.generation import resolve_torch_dtype
+from src.inference_it.runtime import run_inference
 from src.posttraining.chat_template import ChatMessage
 from src.shared.model.kv_cache import KeyValueCache
 
@@ -96,6 +99,41 @@ class FakeModel(nn.Module):
 
 
 class InferenceItTest(unittest.TestCase):
+    def test_run_inference_moves_model_to_resolved_device(self) -> None:
+        # ---------------------------------------------------------
+        # Move the loaded instruction model to the automatically
+        # resolved device before chat generation starts.
+        # ---------------------------------------------------------
+        args = argparse.Namespace(
+            model_dir="model",
+            prompt="hello",
+            max_new_tokens=1,
+            do_sample=False,
+            temperature=1.0,
+            top_p=1.0,
+            top_k=0,
+            repetition_penalty=1.0,
+            no_repeat_ngram_size=0,
+            torch_dtype="auto",
+        )
+        model = MagicMock()
+        model.to.return_value = model
+        tokenizer = MagicMock()
+        tokenizer.get_vocab_size.return_value = 16
+        device = torch.device("mps")
+
+        with (
+            patch("src.inference_it.runtime.resolve_model_dir", return_value=Path("model")),
+            patch("src.inference_it.runtime.ByteLevelBPE.load", return_value=tokenizer),
+            patch("src.inference_it.runtime.load_pytorch_model", return_value=(model, {})),
+            patch("src.inference_it.runtime.resolve_inference_device", return_value=device),
+            patch("src.inference_it.runtime.generate_and_print_response", return_value="response"),
+        ):
+            run_inference(args=args)
+
+        model.to.assert_called_once_with(device=device)
+        model.eval.assert_called_once_with()
+
     def test_build_chat_input_ids_applies_chat_template(self) -> None:
         # ---------------------------------------------------------
         # Serialize user and assistant turns with role markers,

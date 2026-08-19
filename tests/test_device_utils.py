@@ -1,12 +1,54 @@
 import unittest
 from unittest.mock import patch
 
+import torch
+
 from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
+from src.shared.device_utils import resolve_inference_device
 from src.shared.device_utils import resolve_strategy
 
 
 class DeviceUtilsTest(unittest.TestCase):
+    def test_resolve_inference_device_prefers_cuda(self) -> None:
+        # ---------------------------------------------------------
+        # Select CUDA before MPS when both accelerator backends are
+        # reported as available.
+        # ---------------------------------------------------------
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.backends.mps.is_available", return_value=True),
+        ):
+            device = resolve_inference_device()
+
+        self.assertEqual(device, torch.device("cuda"))
+
+    def test_resolve_inference_device_uses_mps_without_cuda(self) -> None:
+        # ---------------------------------------------------------
+        # Select Apple Metal when CUDA is unavailable and MPS can be
+        # used by the current PyTorch installation.
+        # ---------------------------------------------------------
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.backends.mps.is_available", return_value=True),
+        ):
+            device = resolve_inference_device()
+
+        self.assertEqual(device, torch.device("mps"))
+
+    def test_resolve_inference_device_uses_cpu_without_accelerator(self) -> None:
+        # ---------------------------------------------------------
+        # Keep inference available on CPU when neither supported GPU
+        # backend is available.
+        # ---------------------------------------------------------
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.backends.mps.is_available", return_value=False),
+        ):
+            device = resolve_inference_device()
+
+        self.assertEqual(device, torch.device("cpu"))
+
     def test_resolve_devices_accepts_auto_and_positive_integer(self) -> None:
         # ---------------------------------------------------------
         # Keep the CLI device selector compatible with Lightning's

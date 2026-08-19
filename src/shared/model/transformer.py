@@ -199,11 +199,23 @@ class DecoderOnlyTransformer(L.LightningModule):
             raise ValueError("LR schedule requires warmup steps, total steps, and minimum learning rate")
 
         # ---------------------------------------------------------
-        # Fuse vocabulary projection and cross entropy on CUDA.
+        # Delay the CUDA-only training loss until compute_loss uses it
+        # so model construction remains available for inference.
         # ---------------------------------------------------------
-        self.linear_cross_entropy = build_linear_cross_entropy_loss(
-            ignore_index=pad_token_id,
-        )
+        self._linear_cross_entropy: nn.Module | None = None
+
+    @property
+    def linear_cross_entropy(self) -> nn.Module:
+        # ---------------------------------------------------------
+        # Build the parameter-free fused loss once, immediately before
+        # the first CUDA training loss calculation.
+        # ---------------------------------------------------------
+        if self._linear_cross_entropy is None:
+            self._linear_cross_entropy = build_linear_cross_entropy_loss(
+                ignore_index=self.pad_token_id,
+            )
+
+        return self._linear_cross_entropy
 
     def forward_hidden(
         self,

@@ -9,6 +9,20 @@ DevicesValue = int | str
 CUDA_DEVICE = torch.device("cuda")
 
 
+def resolve_inference_device() -> torch.device:
+    # ---------------------------------------------------------
+    # Prefer CUDA, then Apple Metal, and use CPU when neither
+    # accelerator is available.
+    # ---------------------------------------------------------
+    if torch.cuda.is_available():
+        return CUDA_DEVICE
+
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+
+    return torch.device("cpu")
+
+
 def resolve_devices(devices: str) -> DevicesValue:
     # ---------------------------------------------------------
     # Convert the CLI device selector into the value expected by

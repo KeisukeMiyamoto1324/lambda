@@ -1,10 +1,16 @@
+import argparse
+from pathlib import Path
 import unittest
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
 
 from src.inference_base.generation import stream_continuation_text
+from src.inference_base.runtime import run_inference
 from src.shared.model.kv_cache import KeyValueCache
+from src.shared.model.transformer import DecoderOnlyTransformer
 
 
 class FakeTokenizer:
@@ -72,6 +78,73 @@ class FakeModel(nn.Module):
 
 
 class InferenceBaseTest(unittest.TestCase):
+    def test_run_inference_moves_model_to_resolved_device(self) -> None:
+        # ---------------------------------------------------------
+        # Move the loaded base model to the automatically resolved
+        # device before generation starts.
+        # ---------------------------------------------------------
+        args = argparse.Namespace(
+            model_dir="model",
+            prompt="hello",
+            max_new_tokens=1,
+            do_sample=False,
+            temperature=1.0,
+            top_p=1.0,
+            top_k=0,
+            repetition_penalty=1.0,
+            no_repeat_ngram_size=0,
+            torch_dtype="auto",
+        )
+        model = MagicMock()
+        model.to.return_value = model
+        tokenizer = MagicMock()
+        tokenizer.get_vocab_size.return_value = 16
+        device = torch.device("mps")
+
+        with (
+            patch("src.inference_base.runtime.resolve_model_dir", return_value=Path("model")),
+            patch("src.inference_base.runtime.ByteLevelBPE.load", return_value=tokenizer),
+            patch("src.inference_base.runtime.load_pytorch_model", return_value=(model, {})),
+            patch("src.inference_base.runtime.resolve_inference_device", return_value=device),
+            patch("src.inference_base.runtime.stream_continuation_text", return_value=iter(())),
+            patch("src.inference_base.runtime.console"),
+        ):
+            run_inference(args=args)
+
+        model.to.assert_called_once_with(device=device)
+        model.eval.assert_called_once_with()
+
+    @unittest.skipUnless(torch.backends.mps.is_available(), "MPS is required")
+    def test_transformer_cache_path_runs_on_mps(self) -> None:
+        # ---------------------------------------------------------
+        # Exercise the real cached generation operations on Apple
+        # Metal without loading the CUDA-only training loss.
+        # ---------------------------------------------------------
+        model = DecoderOnlyTransformer(
+            num_tokens=32,
+            d_model=16,
+            max_len=32,
+            num_layers=2,
+            num_heads=4,
+            num_kv_heads=2,
+            d_ff=32,
+        ).to(device=torch.device("mps"))
+        input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device="mps")
+
+        with torch.no_grad():
+            logits, cache = model.forward_with_cache(
+                token_ids=input_ids,
+                past_key_values=None,
+            )
+            next_logits, _ = model.forward_with_cache(
+                token_ids=input_ids[:, :1],
+                past_key_values=cache,
+            )
+
+        self.assertEqual(logits.device.type, "mps")
+        self.assertEqual(logits.shape, (1, 3, 32))
+        self.assertEqual(next_logits.shape, (1, 1, 32))
+
     def test_stream_continuation_text_yields_decoded_chunks(self) -> None:
         # ---------------------------------------------------------
         # Stream decoded text chunks as each token is generated while

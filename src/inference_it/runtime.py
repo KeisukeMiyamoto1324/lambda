@@ -4,7 +4,7 @@ from src.inference_it.generation import generate_chat_response
 from src.inference_it.generation import resolve_torch_dtype
 from src.shared.chat_template import ChatMessage
 from src.shared.console import console
-from src.shared.device_utils import CUDA_DEVICE
+from src.shared.device_utils import resolve_inference_device
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import resolve_model_dir
@@ -49,7 +49,8 @@ def run_inference(args: argparse.Namespace) -> None:
         vocab_size=tokenizer.get_vocab_size(),
     )
     torch_dtype = resolve_torch_dtype(torch_dtype=args.torch_dtype)
-    model = model.to(device=CUDA_DEVICE)
+    device = resolve_inference_device()
+    model = model.to(device=device)
 
     if torch_dtype is not None:
         model = model.to(dtype=torch_dtype)
