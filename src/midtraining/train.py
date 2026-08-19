@@ -14,7 +14,8 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.midtraining.cli import parse_args
-from src.midtraining.training_corpus_cases import MIDTRAINING_CORPUS_CASE
+from src.midtraining.training_corpus_cases import MIDTRAINING_TRAIN_CORPUS_CASE
+from src.midtraining.training_corpus_cases import MIDTRAINING_VALIDATION_CORPUS_CASE
 from src.midtraining.training_corpus_cases import serialize_midtraining_corpus_case
 from src.shared.device_utils import is_global_zero_process
 from src.shared.device_utils import resolve_device_count
@@ -32,6 +33,7 @@ from src.shared.pytorch_artifacts import load_model_config
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.tokenizer import ByteLevelBPE
+from src.shared.training_corpus import TrainingCorpusCase
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
 from src.shared.training_token_budget import show_training_token_budget
 from src.shared.training_progress import FullTrainingProgressBar
@@ -48,12 +50,12 @@ SHUFFLE_BUFFER_SIZE = 10000
 SHUFFLE_SEED = 17
 
 
-def build_corpus_signature() -> str:
+def build_dataset_signature(corpus_case: TrainingCorpusCase) -> str:
     # ---------------------------------------------------------
-    # Build a stable validation cache key from the exact corpus
-    # definition used by this mid-training stage.
+    # Hash one dataset configuration into a stable identifier for
+    # model metadata and validation cache invalidation.
     # ---------------------------------------------------------
-    payload = serialize_midtraining_corpus_case(MIDTRAINING_CORPUS_CASE)
+    payload = serialize_midtraining_corpus_case(corpus_case)
     encoded_payload = json.dumps(payload, sort_keys=True).encode("utf-8")
     return blake2b(encoded_payload, digest_size=8).hexdigest()
 
@@ -85,19 +87,19 @@ def main() -> None:
     checkpoint_dir = model_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     validation_sample_count = args.batch_size * args.val_batches * device_count
-    corpus_signature = build_corpus_signature()
+    train_dataset_signature = build_dataset_signature(
+        corpus_case=MIDTRAINING_TRAIN_CORPUS_CASE,
+    )
+    validation_dataset_signature = build_dataset_signature(
+        corpus_case=MIDTRAINING_VALIDATION_CORPUS_CASE,
+    )
     default_validation_cache_path = (
         model_dir
-        / f"validation-cache-{corpus_signature}-{PACKING_VERSION}-len{max_len}-samples{validation_sample_count}"
-        f"-split{args.val_split_modulo}-{args.val_split_index}.pt"
+        / f"validation-cache-{validation_dataset_signature}-{PACKING_VERSION}-len{max_len}"
+        f"-samples{validation_sample_count}.pt"
     )
     validation_cache_path = (
         Path(args.validation_cache_path) if args.validation_cache_path else default_validation_cache_path
-    )
-    train_split_indexes = tuple(
-        split_index
-        for split_index in range(args.val_split_modulo)
-        if split_index != args.val_split_index
     )
     shuffle_seed = resolve_resume_shuffle_seed(
         base_seed=SHUFFLE_SEED,
@@ -109,32 +111,30 @@ def main() -> None:
     # Lightning reaches the configured optimizer step budget.
     # ---------------------------------------------------------
     train_dataset = PackedCorpusDataset(
-        corpus_case=MIDTRAINING_CORPUS_CASE,
+        corpus_case=MIDTRAINING_TRAIN_CORPUS_CASE,
         tokenizer=tokenizer,
         max_len=max_len,
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,
         eos_token_id=eos_token_id,
-        split_modulo=args.val_split_modulo,
-        split_indexes=train_split_indexes,
         shuffle_buffer_size=SHUFFLE_BUFFER_SIZE,
         shuffle_seed=shuffle_seed,
         repeat_forever=True,
     )
     validation_source_dataset = PackedCorpusDataset(
-        corpus_case=MIDTRAINING_CORPUS_CASE,
+        corpus_case=MIDTRAINING_VALIDATION_CORPUS_CASE,
         tokenizer=tokenizer,
         max_len=max_len,
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,
         eos_token_id=eos_token_id,
-        split_modulo=args.val_split_modulo,
-        split_indexes=(args.val_split_index,),
     )
     validation_cache_metadata = {
         "packing_version": PACKING_VERSION,
-        "corpus_signature": corpus_signature,
-        "corpus_case": serialize_midtraining_corpus_case(MIDTRAINING_CORPUS_CASE),
+        "validation_dataset_signature": validation_dataset_signature,
+        "validation_dataset_case": serialize_midtraining_corpus_case(
+            MIDTRAINING_VALIDATION_CORPUS_CASE
+        ),
     }
 
     if not validation_cache_path.exists() and is_global_zero_process():
@@ -291,10 +291,14 @@ def main() -> None:
         "eos_token_id": eos_token_id,
         "midtraining_source_model": str(source_model_dir),
         "midtraining_max_steps": args.max_steps,
-        "dataset_case": serialize_midtraining_corpus_case(MIDTRAINING_CORPUS_CASE),
-        "corpus_signature": corpus_signature,
-        "val_split_modulo": args.val_split_modulo,
-        "val_split_index": args.val_split_index,
+        "train_dataset_signature": train_dataset_signature,
+        "validation_dataset_signature": validation_dataset_signature,
+        "train_dataset_case": serialize_midtraining_corpus_case(
+            MIDTRAINING_TRAIN_CORPUS_CASE
+        ),
+        "validation_dataset_case": serialize_midtraining_corpus_case(
+            MIDTRAINING_VALIDATION_CORPUS_CASE
+        ),
         "validation_cache_path": str(validation_cache_path),
         "validation_sample_count": validation_sample_count,
         "packing_version": PACKING_VERSION,

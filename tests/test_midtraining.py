@@ -5,26 +5,35 @@ import unittest
 from unittest.mock import patch
 
 from src.midtraining.cli import parse_args
-from src.midtraining.training_corpus_cases import MIDTRAINING_CORPUS_CASE
+from src.midtraining.training_corpus_cases import MIDTRAINING_TRAIN_CORPUS_CASE
+from src.midtraining.training_corpus_cases import MIDTRAINING_VALIDATION_CORPUS_CASE
 
 
 class MidtrainingTest(unittest.TestCase):
-    def test_corpus_uses_synthetic_textbook_rewrite_column(self) -> None:
+    def test_corpora_use_registered_train_and_validation_splits(self) -> None:
         # ---------------------------------------------------------
-        # Train only on the synthetic textbook rewrite text from
-        # the single default training split.
+        # Use the complete registered splits and the synthetic
+        # textbook rewrite text for training and validation.
         # ---------------------------------------------------------
         self.assertEqual(
             (
-                MIDTRAINING_CORPUS_CASE.dataset_path,
-                MIDTRAINING_CORPUS_CASE.config_name,
-                MIDTRAINING_CORPUS_CASE.split,
-                MIDTRAINING_CORPUS_CASE.text_column,
+                MIDTRAINING_TRAIN_CORPUS_CASE.dataset_path,
+                MIDTRAINING_TRAIN_CORPUS_CASE.config_name,
+                MIDTRAINING_TRAIN_CORPUS_CASE.split,
+                MIDTRAINING_TRAIN_CORPUS_CASE.text_column,
+                MIDTRAINING_VALIDATION_CORPUS_CASE.dataset_path,
+                MIDTRAINING_VALIDATION_CORPUS_CASE.config_name,
+                MIDTRAINING_VALIDATION_CORPUS_CASE.split,
+                MIDTRAINING_VALIDATION_CORPUS_CASE.text_column,
             ),
             (
                 "KeisukeMiyamoto/SyntheticTextbook-jp",
                 "default",
                 "train",
+                "rewrite",
+                "KeisukeMiyamoto/SyntheticTextbook-jp",
+                "default",
+                "validation",
                 "rewrite",
             ),
         )
@@ -76,7 +85,6 @@ class MidtrainingTest(unittest.TestCase):
             invalid_cases = [
                 ("--max-len", "0"),
                 ("--batch-size", "0"),
-                ("--val-split-modulo", "0"),
                 ("--val-batches", "0"),
                 ("--val-check-interval", "0"),
                 ("--checkpoint-every-n-steps", "0"),
@@ -93,6 +101,29 @@ class MidtrainingTest(unittest.TestCase):
                 ]
 
                 with self.subTest(flag=flag), patch("sys.argv", argv), patch("sys.stderr", io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        parse_args()
+
+    def test_parse_args_rejects_removed_validation_split_options(self) -> None:
+        # ---------------------------------------------------------
+        # Reject obsolete hash split settings because midtraining
+        # now uses registered train and validation dataset splits.
+        # ---------------------------------------------------------
+        removed_options = ["--val-split-modulo", "--val-split-index"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+
+            for file_name in ["model.pth", "model_config.json", "tokenizer.json"]:
+                (model_dir / file_name).touch()
+
+            for option in removed_options:
+                argv = ["train.py", "--model-path", str(model_dir), option, "1"]
+
+                with self.subTest(option=option), patch("sys.argv", argv), patch(
+                    "sys.stderr",
+                    io.StringIO(),
+                ):
                     with self.assertRaises(SystemExit):
                         parse_args()
 
