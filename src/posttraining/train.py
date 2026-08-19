@@ -26,6 +26,7 @@ from src.shared.device_utils import resolve_device_count
 from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_strategy
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.compilation import configure_compilation_output
 from src.shared.model.float8_training import convert_model_to_float8_training
 from src.shared.pytorch_artifacts import push_pytorch_model_artifacts
 from src.shared.training_checkpoint import resolve_resume_shuffle_seed
@@ -38,6 +39,7 @@ def main() -> None:
     # Parse CLI input, prepare output storage, and resolve the
     # requested CUDA device configuration.
     # ---------------------------------------------------------
+    configure_compilation_output()
     args = parse_args()
     model_dir = Path(args.output_path)
     model_dir.mkdir(parents=True, exist_ok=True)

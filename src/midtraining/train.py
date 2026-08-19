@@ -23,6 +23,7 @@ from src.shared.device_utils import resolve_devices
 from src.shared.device_utils import resolve_strategy
 from src.shared.device_utils import wait_for_file
 from src.shared.model.compilation import compile_training_model
+from src.shared.model.compilation import configure_compilation_output
 from src.shared.model.float8_training import convert_model_to_float8_training
 from src.shared.model.float8_training import FLOAT8_RECIPE
 from src.shared.model.float8_training import TRAINING_PRECISION
@@ -65,6 +66,7 @@ def main() -> None:
     # Load the pretrained artifacts and resolve the requested
     # context length before creating datasets or output files.
     # ---------------------------------------------------------
+    configure_compilation_output()
     args = parse_args()
     source_model_dir = Path(args.model_path)
     source_model_config = load_model_config(model_dir=source_model_dir)
