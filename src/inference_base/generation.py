@@ -240,11 +240,11 @@ def stream_continuation_text(
     new_token_ids: list[int] = []
     past_key_values: KeyValueCache | None = None
     current_input_ids = input_ids
-    streamed_text = ""
+    emitted_text_length = 0
 
     # ---------------------------------------------------------
-    # Decode the whole generated suffix each step and yield only
-    # the new tail so byte-level tokens stay readable.
+    # Decode the whole generated suffix each step. Hold a trailing
+    # replacement character until its UTF-8 byte sequence completes.
     # ---------------------------------------------------------
     with torch.no_grad():
         for _ in range(max_new_tokens):
@@ -265,12 +265,21 @@ def stream_continuation_text(
             generated_ids.append(next_token_id)
 
             if next_token_id == eos_token_id:
-                return
+                break
 
             new_token_ids.append(next_token_id)
             decoded_text = tokenizer.detokenize(new_token_ids)
-            chunk = decoded_text[len(streamed_text) :]
-            streamed_text = decoded_text
+
+            if decoded_text.endswith("\ufffd"):
+                current_input_ids = torch.tensor(
+                    [[next_token_id]],
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+                continue
+
+            chunk = decoded_text[emitted_text_length:]
+            emitted_text_length = len(decoded_text)
 
             if chunk:
                 yield chunk
@@ -280,3 +289,13 @@ def stream_continuation_text(
                 dtype=torch.long,
                 device=input_ids.device,
             )
+
+    # ---------------------------------------------------------
+    # Flush a genuinely incomplete final byte sequence as the
+    # decoder's replacement character when generation stops.
+    # ---------------------------------------------------------
+    decoded_text = tokenizer.detokenize(new_token_ids)
+    final_chunk = decoded_text[emitted_text_length:]
+
+    if final_chunk:
+        yield final_chunk

@@ -77,6 +77,20 @@ class FakeModel(nn.Module):
         return logits, []
 
 
+class SplitUtf8Tokenizer(FakeTokenizer):
+    def detokenize(self, token_ids: list[int]) -> str:
+        # ---------------------------------------------------------
+        # Reproduce a Japanese character split across byte-level
+        # tokens, including the temporary replacement character.
+        # ---------------------------------------------------------
+        text_by_token_ids = {
+            (10,): "東京\ufffd",
+            (10, 11): "東京で",
+            (10, 11, 12): "東京です",
+        }
+        return text_by_token_ids[tuple(token_ids)]
+
+
 class InferenceBaseTest(unittest.TestCase):
     def test_run_inference_moves_model_to_resolved_device(self) -> None:
         # ---------------------------------------------------------
@@ -194,6 +208,30 @@ class InferenceBaseTest(unittest.TestCase):
 
         self.assertEqual(chunks, ["Hel"])
         self.assertEqual(model.calls, [[1, 8, 9], [10]])
+
+    def test_stream_continuation_text_buffers_incomplete_utf8_character(self) -> None:
+        # ---------------------------------------------------------
+        # Do not emit a temporary replacement character when later
+        # byte-level tokens complete the Japanese character.
+        # ---------------------------------------------------------
+        model = FakeModel(next_token_ids=[10, 11, 12])
+        tokenizer = SplitUtf8Tokenizer()
+        chunks = list(
+            stream_continuation_text(
+                model=model,
+                tokenizer=tokenizer,
+                prompt="hello",
+                max_new_tokens=3,
+                do_sample=False,
+                temperature=1.0,
+                top_p=1.0,
+                top_k=0,
+                repetition_penalty=1.0,
+                no_repeat_ngram_size=0,
+            )
+        )
+
+        self.assertEqual(chunks, ["東京で", "す"])
 
 
 if __name__ == "__main__":
