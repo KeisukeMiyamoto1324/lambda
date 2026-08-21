@@ -114,3 +114,9 @@ Generate a response with the instruction-tuned model created above.
 ```bash
 python3 src/inference_it/inference.py --model-dir models/lambda-360m-it --prompt "人工知能とは何ですか？"
 ```
+
+## Support Lambda
+
+Lambda is a personal project developed by a student. Training language models is very expensive, and I have funded the project with income from my part-time job. As the models grow, the cost is becoming too high for me to maintain the current development pace.
+
+You can support the project with a donation starting from $5 through [Ko-fi](https://ko-fi.com/lambda_llm). Thank you for helping Lambda continue to grow.
