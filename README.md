@@ -31,7 +31,7 @@ Each training stage uses the following dataset:
 
 | Stage | Dataset |
 |---|---|
-| Tokenizer training and pretraining | [lambda-corpus](https://huggingface.co/datasets/KeisukeMiyamoto/lambda-corpus) |
+| Pretraining | [lambda-corpus](https://huggingface.co/datasets/KeisukeMiyamoto/lambda-corpus) |
 | Midtraining | [SyntheticTextbook-jp](https://huggingface.co/datasets/KeisukeMiyamoto/SyntheticTextbook-jp) |
 | Posttraining | [SyntheticTalk-jp](https://huggingface.co/datasets/KeisukeMiyamoto/SyntheticTalk-jp) |
 
