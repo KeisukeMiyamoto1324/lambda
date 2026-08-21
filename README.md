@@ -12,13 +12,6 @@ Lambda is an open project for learning how a Japanese language model is built. I
 
 The project uses streamed Japanese datasets and saves models in a Hugging Face-compatible format. The default base model has about 360 million parameters and is designed to be trained on [NVIDIA H100](https://cloud.vast.ai/?ref_id=521936) GPUs.
 
-## PR: vast.ai
-Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train lambda.
-
-When you sign up and purchase credits through the link below, I receive GPU credits equal to 3% of your purchase. This does not reduce your credits or add any extra cost. Using this link directly supports the development of Lambda. Thank you for your support.
-
-link: https://cloud.vast.ai/?ref_id=521936
-
 ## Models and Datasets
 
 The trained 360M models are available on Hugging Face:
@@ -117,8 +110,26 @@ Generate a response with the instruction-tuned model created above.
 python3 src/inference_it/inference.py --model-dir models/lambda-360m-it --prompt "人工知能とは何ですか？"
 ```
 
+---
+
 ## Support Lambda
 
-Lambda is a personal project developed by a student. Training language models is very expensive, and I have funded the project with income from my part-time job. As the models grow, the cost is becoming too high for me to maintain the current development pace.
+[Lambda](https://github.com/KeisukeMiyamoto1324/lambda) is a project I am developing as a student to build small Japanese language models from scratch. The datasets, source code, and model weights are publicly available.
 
-You can support the project with a donation starting from $5 through [Ko-fi](https://ko-fi.com/lambda_llm). Thank you for helping Lambda continue to grow.
+Training language models is very expensive, and I have funded the project with income from my part-time job. As the models grow, the cost is becoming too high for me to maintain the current development pace.
+
+You can support Lambda in two ways: use the Vast.ai referral link when purchasing GPU credits or make a donation through Ko-fi. Thank you for helping Lambda continue to grow.
+
+### PR: vast.ai
+
+Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train language models.
+
+When you sign up and purchase credits through the link below, I receive GPU credits equal to 3% of your purchase. This does not reduce your credits or add any extra cost. Using this link directly supports the development of Lambda.
+
+Link: https://cloud.vast.ai/?ref_id=521936
+
+### Donate
+
+You can support the project with a donation starting from $5 through Ko-fi. Your support helps cover GPU costs and allows me to continue developing larger models.
+
+Link: https://ko-fi.com/lambda_llm
