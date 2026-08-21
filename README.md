@@ -4,7 +4,7 @@
 
 # Lambda
 
-A small Japanese language model built and trained from scratch.
+A fully open Japanese language model project where the datasets, source code, and model weights are all publicly available.
 
 ## Overview
 
