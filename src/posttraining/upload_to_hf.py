@@ -18,7 +18,7 @@ def main() -> None:
 
     hf_token = os.environ["HF_TOKEN"]
     hf_repo = os.environ["HF_REPO_IT"]
-    model_dir = Path("models/lambda-1-160m-it")
+    model_dir = Path("models/lambda-1-360m-it")
 
     # ---------------------------------------------------------
     # Push only PyTorch weights, model config, and tokenizer files.
@@ -28,7 +28,7 @@ def main() -> None:
         output_path=model_dir,
         repo_id=hf_repo,
         private=True,
-        commit_message="Upload lambda-1-160m instruction-tuned model",
+        commit_message="Upload lambda-1-360m instruction-tuned model",
         token=hf_token,
     )
 
