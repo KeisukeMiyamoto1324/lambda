@@ -17,6 +17,24 @@ Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers 
 
 link: https://cloud.vast.ai/?ref_id=521936
 
+## Models and Datasets
+
+The trained 360M models are available on Hugging Face:
+
+| Stage | Model |
+|---|---|
+| Pretraining | [lambda-1-360m-base](https://huggingface.co/KeisukeMiyamoto/lambda-1-360m-base) |
+| Midtraining | [lambda-1-360m-mid](https://huggingface.co/KeisukeMiyamoto/lambda-1-360m-mid) |
+| Posttraining | [lambda-1-360m-it](https://huggingface.co/KeisukeMiyamoto/lambda-1-360m-it) |
+
+Each training stage uses the following dataset:
+
+| Stage | Dataset |
+|---|---|
+| Tokenizer training and pretraining | [lambda-corpus](https://huggingface.co/datasets/KeisukeMiyamoto/lambda-corpus) |
+| Midtraining | [SyntheticTextbook-jp](https://huggingface.co/datasets/KeisukeMiyamoto/SyntheticTextbook-jp) |
+| Posttraining | [SyntheticTalk-jp](https://huggingface.co/datasets/KeisukeMiyamoto/SyntheticTalk-jp) |
+
 ## Architecture
 
 Lambda uses a decoder-only Transformer for next-token prediction. Its main components are grouped-query attention, rotary position embeddings, RMS normalization, SwiGLU feed-forward layers with low-rank projections, tied token embeddings, and a KV cache for faster generation.
