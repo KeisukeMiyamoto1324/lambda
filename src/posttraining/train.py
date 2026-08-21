@@ -18,7 +18,6 @@ from src.posttraining.dataloaders import PACKING_VERSION
 from src.posttraining.dataloaders import SHUFFLE_SEED
 from src.posttraining.dataset import LAMBDA_CHAT_DATASET_PATH
 from src.posttraining.model_setup import build_tokenizer
-from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.trainer import train_stage
 from src.shared.device_utils import is_global_zero_process
@@ -48,10 +47,10 @@ def main() -> None:
     strategy = resolve_strategy(device_count=device_count)
 
     # ---------------------------------------------------------
-    # Download base artifacts, prepare the validation cache, and set
-    # up the streamed SFT dataloader and LR schedule.
+    # Load the midtrained artifacts, prepare the validation cache,
+    # and set up the streamed SFT dataloader and LR schedule.
     # ---------------------------------------------------------
-    base_model_dir = download_base_model(base_model_id=args.base_model_id)
+    base_model_dir = Path(args.model_path)
     tokenizer = build_tokenizer(base_model_dir=base_model_dir, output_path=model_dir)
     validation_sample_count = args.batch_size * args.val_batches * device_count
     dataset_name = LAMBDA_CHAT_DATASET_PATH.rsplit("/", maxsplit=1)[-1]

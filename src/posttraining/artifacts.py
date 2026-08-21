@@ -40,7 +40,7 @@ def save_chat_model(
         "bos_token_id": bos_token_id,
         "eos_token_id": eos_token_id,
         "end_of_turn_token_id": end_of_turn_token_id,
-        "base_model_id": args.base_model_id,
+        "base_model_path": args.model_path,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "devices": getattr(args, "devices", "auto"),

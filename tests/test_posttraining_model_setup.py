@@ -16,8 +16,6 @@ from src.posttraining.chat_template import tokenize_chat_messages
 from src.posttraining.cli import parse_args
 from src.posttraining.dataloaders import build_dataloaders
 from src.posttraining.dataset import LambdaChatDataset
-from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
-from src.posttraining.model_setup import download_base_model
 from src.posttraining.model_setup import load_base_model
 from src.posttraining.trainer import build_trainer
 from src.shared.model.transformer import DecoderOnlyTransformer
@@ -135,14 +133,20 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         # Keep the default posttraining duration aligned with the
         # configured full training run.
         # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py"]):
-            args = parse_args()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            (model_dir / "model.pth").touch()
+            (model_dir / "model_config.json").touch()
+            (model_dir / "tokenizer.json").touch()
+
+            with patch("sys.argv", ["train.py", "--model-path", str(model_dir)]):
+                args = parse_args()
 
         self.assertEqual(args.max_steps, 5000)
 
     def test_parse_args_rejects_invalid_runtime_values(self) -> None:
         # ---------------------------------------------------------
-        # Reject invalid values before model download, dataset loading,
+        # Reject invalid values before model loading, dataset loading,
         # or DataLoader construction can begin.
         # ---------------------------------------------------------
         invalid_cases = [
@@ -161,10 +165,31 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             ("--metric-log-every-n-steps", "0"),
         ]
 
-        for flag, value in invalid_cases:
-            with self.subTest(flag=flag), patch("sys.argv", ["train.py", flag, value]), patch(
-                "sys.stderr", io.StringIO()
-            ):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            (model_dir / "model.pth").touch()
+            (model_dir / "model_config.json").touch()
+            (model_dir / "tokenizer.json").touch()
+
+            for flag, value in invalid_cases:
+                argv = ["train.py", "--model-path", str(model_dir), flag, value]
+
+                with self.subTest(flag=flag), patch("sys.argv", argv), patch(
+                    "sys.stderr", io.StringIO()
+                ):
+                    with self.assertRaises(SystemExit):
+                        parse_args()
+
+    def test_parse_args_rejects_incomplete_model_path(self) -> None:
+        # ---------------------------------------------------------
+        # Require weights, configuration, and tokenizer artifacts
+        # from the completed midtraining stage.
+        # ---------------------------------------------------------
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch(
+                "sys.argv",
+                ["train.py", "--model-path", temp_dir],
+            ), patch("sys.stderr", io.StringIO()):
                 with self.assertRaises(SystemExit):
                     parse_args()
 
@@ -190,23 +215,19 @@ class PosttrainingModelSetupTest(unittest.TestCase):
         # Accept automatic upload when the instruction-tuned model
         # repository is available through the environment.
         # ---------------------------------------------------------
-        with patch("sys.argv", ["train.py", "--push-to-hub"]), patch.dict(
-            "os.environ", {"HF_REPO_IT": "user/lambda-it"}
-        ):
-            args = parse_args()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            (model_dir / "model.pth").touch()
+            (model_dir / "model_config.json").touch()
+            (model_dir / "tokenizer.json").touch()
+
+            with patch(
+                "sys.argv",
+                ["train.py", "--model-path", str(model_dir), "--push-to-hub"],
+            ), patch.dict("os.environ", {"HF_REPO_IT": "user/lambda-it"}):
+                args = parse_args()
 
         self.assertTrue(args.push_to_hub)
-
-    def test_download_base_model_uses_hub_snapshot(self) -> None:
-        # ---------------------------------------------------------
-        # Resolve Hub model ids through snapshot_download so training
-        # always works from local artifacts after download.
-        # ---------------------------------------------------------
-        with patch("src.posttraining.model_setup.snapshot_download", return_value="/tmp/model") as mocked_download:
-            model_dir = download_base_model(base_model_id="user/model")
-
-        self.assertEqual(model_dir, Path("/tmp/model"))
-        mocked_download.assert_called_once_with(repo_id="user/model", repo_type="model")
 
     def test_optimizer_uses_all_trainable_parameters(self) -> None:
         # ---------------------------------------------------------
@@ -302,7 +323,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             args = argparse.Namespace(
                 max_len=8,
                 learning_rate=5e-5,
-                base_model_id=DEFAULT_BASE_MODEL_ID,
+                model_path="models/lambda-360m-midtrained",
                 posttraining_steps=9,
                 devices="auto",
                 device_count=1,
@@ -343,7 +364,7 @@ class PosttrainingModelSetupTest(unittest.TestCase):
             payload = json.loads((model_dir / "model_config.json").read_text())
             model_path_exists = (model_dir / "model.pth").is_file()
 
-        self.assertEqual(payload["base_model_id"], DEFAULT_BASE_MODEL_ID)
+        self.assertEqual(payload["base_model_path"], "models/lambda-360m-midtrained")
         self.assertEqual(payload["training_max_len"], 8)
         self.assertEqual(payload["num_kv_heads"], 1)
         self.assertEqual(payload["trainable_layers"], "all")

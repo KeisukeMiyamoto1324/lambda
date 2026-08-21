@@ -1,8 +1,4 @@
-import os
 from pathlib import Path
-
-from dotenv import load_dotenv
-from huggingface_hub import snapshot_download
 
 from src.shared.device_utils import is_global_zero_process
 from src.shared.device_utils import CUDA_DEVICE
@@ -10,23 +6,6 @@ from src.shared.device_utils import wait_for_file
 from src.shared.pytorch_artifacts import load_pytorch_model
 from src.shared.model.transformer import DecoderOnlyTransformer
 from src.shared.tokenizer import ByteLevelBPE
-
-
-# ---------------------------------------------------------
-# Load the base model repository from .env before CLI defaults
-# are defined for posttraining.
-# ---------------------------------------------------------
-load_dotenv()
-DEFAULT_BASE_MODEL_ID = os.environ["HF_REPO_BASE"]
-
-
-def download_base_model(base_model_id: str) -> Path:
-    # ---------------------------------------------------------
-    # Download the Hub snapshot so tokenizer and model artifacts
-    # are available through the existing local loaders.
-    # ---------------------------------------------------------
-    return Path(snapshot_download(repo_id=base_model_id, repo_type="model"))
-
 
 def build_tokenizer(base_model_dir: Path, output_path: Path) -> ByteLevelBPE:
     # ---------------------------------------------------------

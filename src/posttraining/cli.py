@@ -2,7 +2,6 @@ import argparse
 import os
 from pathlib import Path
 
-from src.posttraining.model_setup import DEFAULT_BASE_MODEL_ID
 from src.shared.cli import require
 from src.shared.device_utils import resolve_devices
 
@@ -13,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     # model into a chat-oriented model artifact.
     # ---------------------------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model-id", type=str, default=DEFAULT_BASE_MODEL_ID)
+    parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--output-path", type=str, default="models/lambda-1-360m-it")
     parser.add_argument("--max-len", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
@@ -36,6 +35,20 @@ def parse_args() -> argparse.Namespace:
     resume_group.add_argument("--continue-from-model", type=str, default="")
 
     args = parser.parse_args()
+
+    # ---------------------------------------------------------
+    # Require the complete midtrained model artifact so posttraining
+    # continues from its tokenizer, configuration, and weights.
+    # ---------------------------------------------------------
+    model_path = Path(args.model_path)
+    required_model_files = [
+        model_path / "model.pth",
+        model_path / "model_config.json",
+        model_path / "tokenizer.json",
+    ]
+
+    if not model_path.is_dir() or any(not path.is_file() for path in required_model_files):
+        parser.error("--model-path must contain model.pth, model_config.json, and tokenizer.json")
 
     # ---------------------------------------------------------
     # Validate posttraining-specific runtime values before loading
