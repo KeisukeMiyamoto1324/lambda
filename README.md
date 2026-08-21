@@ -10,7 +10,12 @@ A small Japanese language model built and trained from scratch.
 
 Lambda is an open project for learning how a Japanese language model is built. It covers the full process: tokenizer training, pretraining, midtraining, instruction tuning, inference, and evaluation.
 
-The project uses streamed Japanese datasets and saves models in a Hugging Face-compatible format. The default base model has about 360 million parameters and is designed to be trained on NVIDIA H100 GPUs.
+The project uses streamed Japanese datasets and saves models in a Hugging Face-compatible format. The default base model has about 360 million parameters and is designed to be trained on [NVIDIA H100](https://cloud.vast.ai/?ref_id=521936) GPUs.
+
+## PR: vast.ai
+Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train lambda.
+
+link: https://cloud.vast.ai/?ref_id=521936
 
 ## Architecture
 
@@ -91,11 +96,3 @@ Generate a response with the instruction-tuned model created above.
 ```bash
 python3 src/inference_it/inference.py --model-dir models/lambda-360m-it --prompt "人工知能とは何ですか？"
 ```
-
-
-
-
-## PR: vast.ai
-Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train lambda.
-
-link: https://cloud.vast.ai/?ref_id=521936
