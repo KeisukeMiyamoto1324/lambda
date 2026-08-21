@@ -15,6 +15,8 @@ The project uses streamed Japanese datasets and saves models in a Hugging Face-c
 ## PR: vast.ai
 Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train lambda.
 
+When you sign up and purchase credits through the link below, I receive GPU credits equal to 3% of your purchase. This does not reduce your credits or add any extra cost. Using this link directly supports the development of Lambda. Thank you for your support.
+
 link: https://cloud.vast.ai/?ref_id=521936
 
 ## Models and Datasets
