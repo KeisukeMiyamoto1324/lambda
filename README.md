@@ -132,4 +132,6 @@ Link: https://cloud.vast.ai/?ref_id=521936
 
 You can support the project with a donation starting from $5 through Ko-fi. Your support helps cover GPU costs and allows me to continue developing larger models.
 
-Link: https://ko-fi.com/lambda_llm
+<a href="https://ko-fi.com/lambda_llm">
+  <img src="assets/support_me_on_kofi_badge_blue.png" alt="Support Lambda on Ko-fi" width="240">
+</a>
