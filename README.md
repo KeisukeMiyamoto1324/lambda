@@ -114,23 +114,19 @@ python3 src/inference_it/inference.py --model-dir models/lambda-360m-it --prompt
 
 ## Support Lambda
 
-[Lambda](https://github.com/KeisukeMiyamoto1324/lambda) is a project I am developing as a student to build small Japanese language models from scratch. The datasets, source code, and model weights are publicly available.
+[Lambda](https://github.com/KeisukeMiyamoto1324/lambda) is an open-source project for building small Japanese language models from scratch. As a student, I have funded this project with income from my part-time job, but the growing training costs are becoming difficult to cover.
 
-Training language models is very expensive, and I have funded the project with income from my part-time job. As the models grow, the cost is becoming too high for me to maintain the current development pace.
+Your support helps cover GPU costs and develop larger models. Thank you for helping Lambda continue to grow.
 
-You can support Lambda in two ways: use the Vast.ai referral link when purchasing GPU credits or make a donation through Ko-fi. Thank you for helping Lambda continue to grow.
+### Vast.ai
 
-### PR: vast.ai
+Vast.ai offers affordable cloud GPUs for AI training, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. If you purchase credits through the link below, I receive 3% in GPU credits at no extra cost to you.
 
-Vast.ai is a GPU cloud platform that lets you rent powerful GPUs from providers around the world. It is often more affordable than major cloud providers, with **NVIDIA H100 SXM GPUs available from around $1.54 per hour**. Check out Vast.ai for a lower-cost way to train language models.
+https://cloud.vast.ai/?ref_id=521936
 
-When you sign up and purchase credits through the link below, I receive GPU credits equal to 3% of your purchase. This does not reduce your credits or add any extra cost. Using this link directly supports the development of Lambda.
+### Ko-fi
 
-Link: https://cloud.vast.ai/?ref_id=521936
-
-### Donate
-
-You can support the project with a donation starting from $5 through Ko-fi. Your support helps cover GPU costs and allows me to continue developing larger models.
+Support Lambda with a donation starting from $5.
 
 <a href="https://ko-fi.com/lambda_llm">
   <img src="assets/support_me_on_kofi_badge_blue.png" alt="Support Lambda on Ko-fi" width="240">
