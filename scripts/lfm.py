@@ -2,11 +2,11 @@ import time
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 
-model_id = "LiquidAI/LFM2.5-350M-Base"
+model_id = "LiquidAI/LFM2.5-230M-Base"
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
     device_map="auto",
-    # dtype="bfloat16",
+    dtype="bfloat16",
 #   attn_implementation="flash_attention_2" <- uncomment on compatible GPU
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id)
