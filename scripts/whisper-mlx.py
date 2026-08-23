@@ -1,4 +1,3 @@
-import argparse
 import time
 from pathlib import Path
 
@@ -6,11 +5,8 @@ import mlx.core as mx
 import mlx_whisper
 from mlx_whisper.transcribe import ModelHolder
 
-MODEL_ID = "mlx-community/whisper-large-v3-turbo"
-
-parser = argparse.ArgumentParser()
-parser.add_argument("audio", type=Path)
-args = parser.parse_args()
+MODEL_ID = "mlx-community/whisper-large-v3-turbo-q4"
+AUDIO_PATH = Path(__file__).resolve().parents[1] / "data/audio/whisper-sample.wav"
 
 # ---------------------------------------------------------
 # Load the model before measuring transcription speed.
@@ -20,7 +16,7 @@ mx.reset_peak_memory()
 
 start_time = time.perf_counter()
 result = mlx_whisper.transcribe(
-    str(args.audio),
+    str(AUDIO_PATH),
     path_or_hf_repo=MODEL_ID,
     verbose=True,
 )
