@@ -10,8 +10,6 @@ A fully open Japanese language model project where the datasets, source code, an
 
 Lambda is an open project for learning how a Japanese language model is built. It covers the full process: tokenizer training, pretraining, midtraining, instruction tuning, inference, and evaluation.
 
-The project uses streamed Japanese datasets and saves models in a Hugging Face-compatible format. The default base model has about 360 million parameters and is designed to be trained on [NVIDIA H100](https://cloud.vast.ai/?ref_id=521936) GPUs.
-
 ## Models and Datasets
 
 The trained 360M models are available on Hugging Face:
@@ -32,7 +30,7 @@ Each training stage uses the following dataset:
 
 ## Architecture
 
-Lambda uses a decoder-only Transformer for next-token prediction. Its main components are grouped-query attention, rotary position embeddings, RMS normalization, SwiGLU feed-forward layers with low-rank projections, tied token embeddings, and a KV cache for faster generation.
+Lambda uses a decoder-only Transformer for next-token prediction. Its main components are grouped-query attention, rotary position embeddings, RMS normalization, SwiGLU feed-forward layers, tied token embeddings, and a KV cache for faster generation.
 
 The repository is organized by each stage of model development:
 
